@@ -1,6 +1,21 @@
 
 Release notes :
 
+MTB V4
+
+- Purging orphaned data to clean up Blender
+- Test note length minimum (not under (10 % of FPS) * 2) => Clamp
+- Small change to channels data structure
+- All objects have the same mesh but still have individual material
+- Add multiple eventNote visualisation
+    - Scale = same as before
+    - Light = use note on/note off and velocity to manage light
+        - Use sigmoid curve to have stronger blue for low velocities and stronger red for high velocities
+- Notes Strip = Use the precise range of notes instead of fixed 88 notes
+    - Use different color for multiple track on same channel
+        - Versus Filter same note played at the same time in MIDI data on same channel from multiple track
+- Notes Strip => possibility to precise witch channel we choose with a channel mask
+
 MTB V3
 
 - Simplify midiparser to focus only on note events

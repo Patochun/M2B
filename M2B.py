@@ -8,7 +8,7 @@ Author   : Patochun (Patrick M)
 Mail     : ptkmgr@gmail.com
 YT       : https://www.youtube.com/channel/UCCNXecgdUbUChEyvW3gFWvw
 Create   : 2024-11-11
-Version  : 3.0
+Version  : 4.0
 Compatibility : Blender 4.0 and above
 
 Licence used : GNU GPL v3
@@ -23,6 +23,7 @@ Usage : All parameters like midifile used and animation choices are hardcoded in
 import bpy
 import bmesh
 from bpy_extras.node_shader_utils import PrincipledBSDFWrapper
+import sys
 
 # Global blender objects
 bDat = bpy.data
@@ -38,7 +39,6 @@ Add :
     add notesUsed inside track object
     add track only if exist notes inside into tracks
     add trackIndexUsed vs trackIndex
-    Simplify for focusing on notes
     
 Integrated directly here for simplification
 """
@@ -88,11 +88,20 @@ class MIDINote:
 from typing import List
 
 @dataclass
+class MIDIChannelNote:
+    track: int = 0
+    channel: int = 0
+    noteNumber: int = 0
+    timeOn: float = 0
+    timeOff: float = 0
+    velocity: float = 0
+
+@dataclass
 class MIDIChannel:
     index: int = 0
     minNote: int = 1000
     maxNote: int = 0
-    notes: List[MIDINote] = field(default_factory = list)
+    notes: List[MIDIChannelNote] = field(default_factory = list)
     notesUsed: List[int] = field(default_factory = list)
 
 @dataclass
@@ -746,6 +755,7 @@ def setBlenderUnits(unitScale=0.01, lengthUnit="CENTIMETERS"):
                 if space.type == 'VIEW_3D':  # check 3D space in editor
                     # Modifier l'échelle de la grille
                     space.overlay.grid_scale = 0.01
+                    space.clip_end = 10000.0
                     break
 
 # Research about a collection
@@ -772,6 +782,47 @@ def create_collection(collection_name, parent_collection):
 def clearCollection(collection):
     for obj in list(collection.objects):
         bDat.objects.remove(obj, do_unlink=True)
+
+def purge_unused_data():
+    """
+    Purge all orphaned (unused) data in the current Blender file.
+    This includes unused objects, materials, textures, collections, etc.
+    """
+    
+    # Purge orphaned objects, meshes, lights, cameras, and other data
+    # bOps.outliner.orphan_data()
+    
+    # Force update in case orphan purge needs cleanup
+    # bCon.view_layer.update()
+    
+    # Clear orphaned collections
+    for collection in bDat.collections:
+        if not collection.objects:
+            # If the collection has no objects, remove it
+            bDat.collections.remove(collection)
+
+    # Clean orphaned meshes
+    for mesh in bDat.meshes:
+        if not mesh.users:
+            bDat.meshes.remove(mesh)
+    
+    # Clean orphaned materials
+    for mat in bDat.materials:
+        if not mat.users:
+            bDat.materials.remove(mat)
+
+    # Clean orphaned textures
+    for tex in bDat.textures:
+        if not tex.users:
+            bDat.textures.remove(tex)
+    
+    # Clean orphaned images
+    for img in bDat.images:
+        if not img.users:
+            bDat.images.remove(img)
+
+    # Log the results
+    wLog("Purging complete. Orphaned data cleaned up.")
 
 # Create Rectangular Plane
 def createRectangularPlane(collection, name="RectanglePlane", width=1, height=1, location=(0, 0, 0)):
@@ -812,6 +863,32 @@ def createDuplicateLinkedObject(collection, originalObject, name):
     collection.objects.link(linkedObject)
     return linkedObject
 
+# Set a new material with Object link mode to object
+def setMaterialWithObjectLink(obj, color):
+    # Create new material
+    mat_new = bDat.materials.new(name="Material-"+obj.name)
+    mat_new.use_nodes = True
+    # Set material with base color
+    principled = mat_new.node_tree.nodes.get("Principled BSDF")
+    principled.inputs["Base Color"].default_value = color
+    # Link material to the object (material independent of shared mesh)
+    if len(obj.material_slots) == 0:
+        obj.data.materials.append(mat_new)  # Add a material slot if it doesn't exist
+    obj.material_slots[0].link = 'OBJECT'
+    obj.material_slots[0].material = mat_new  # Assign the material to the object
+
+import colorsys
+
+def generateHSVColors(nSeries):
+    colors = []
+    for i in range(nSeries):
+        hue = i / nSeries  # Espacement uniforme
+        saturation = 0.8    # Saturation élevée pour des couleurs vives
+        value = 0.9         # Luminosité élevée
+        r,g,b = colorsys.hsv_to_rgb(hue, saturation, value)
+        colors.append((r,g,b, 1.0))
+    return colors
+
 # Boolean Modifier
 def booleanModifier(objHost, operandeGuest, typeModifier = "DIFFERENCE"):
     # Ajouter un modificateur booléen pour retirer la géométrie
@@ -833,78 +910,172 @@ def booleanModifier(objHost, operandeGuest, typeModifier = "DIFFERENCE"):
     bCon.view_layer.objects.active = objHost
     bOps.object.modifier_apply(modifier=bool_modifier.name)
 
-# Affect obj with note event
+def clamp(value, min_val, max_val):
+    """Clamp a value to ensure it's between min_val and max_val."""
+    return max(min_val, min(value, max_val))
+
+def smoothstep(edge0, edge1, x):
+    """
+    Smoothstep function for smooth interpolation.
+    Produces a smooth curve from 0 to 1 between edge0 and edge1.
+    """
+    t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+def sigmoid(x, k=10):
+    """Apply a sigmoid function to a value."""
+    return 1 / (1 + math.exp(-k * (x - 0.5)))
+
+# Affect obj with note event accordingly to typeAnim
 # index = 2 mean Z axis
-def eventNote(obj, frameTimeOn, frameTimeOff, velocity):
-    eventLenMove = int(fps * 0.1) # Lenght (in frames) before and after event for moving to it, 10% of FPS
-    # set initial scale cube before acting
-    obj.scale.z = 1
-    obj.location.z = 0
-    obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOn - eventLenMove)  # before upscaling
-    obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOn - eventLenMove)  
-    # Upscale cube at noteNumber on timeOn
-    obj.scale.z = velocity
-    obj.location.z = ((velocity - 1) / 2)
-    obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOn)  # upscaling
-    obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOn)
-    # set actual scale cube before acting
-    obj.scale.z = velocity
-    obj.location.z = ((velocity - 1) / 2)
-    obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOff - eventLenMove) # before downscaling
-    obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOff - eventLenMove)
-    # downscale cube at noteNumber on timeOff
-    obj.scale.z = 1
-    obj.location.z = 0
-    obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOff)  # downscaling
-    obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOff)
+def eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, velocity):
+
+    eventLenMove = round(fps * 0.1) # Lenght (in frames) before and after event for moving to it, 10% of FPS
+    # Test length minimum (not under eventlenmove * 2) => Clamp
+    if frameTimeOff - frameTimeOn < 2 * eventLenMove:
+        eventLenMove = max(1, int((frameTimeOff - frameTimeOn) / 2))
+
+    frameT1 = frameTimeOn
+    frameT2 = frameTimeOn + eventLenMove
+    frameT3 = frameTimeOff - eventLenMove
+    frameT4 = frameTimeOff
+
+    match typeAnim:
+        case "OldScale":
+            velocity = 8 * velocity
+            # set initial scale cube before acting
+            obj.scale.z = 1
+            obj.location.z = 0
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOn - eventLenMove)  # before upscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOn - eventLenMove)  
+            # Upscale cube at noteNumber on timeOn
+            obj.scale.z = velocity
+            obj.location.z = ((velocity - 1) / 2)
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOn)  # upscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOn)
+            # set actual scale cube before acting
+            obj.scale.z = velocity
+            obj.location.z = ((velocity - 1) / 2)
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOff - eventLenMove) # before downscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOff - eventLenMove)
+            # downscale cube at noteNumber on timeOff
+            obj.scale.z = 1
+            obj.location.z = 0
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOff)  # downscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOff)
+        case "Scale":
+            velocity = 8 * velocity
+            # set initial scale cube before acting
+            obj.scale.z = 1
+            obj.location.z = 0
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameT1)  # before upscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameT1)
+            # Upscale cube at noteNumber on timeOn
+            obj.scale.z = velocity
+            obj.location.z = ((velocity - 1) / 2)
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameT2)  # upscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameT2)
+            # set actual scale cube before acting
+            obj.scale.z = velocity
+            obj.location.z = ((velocity - 1) / 2)
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameT3) # before downscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameT3)
+            # downscale cube at noteNumber on timeOff
+            obj.scale.z = 1
+            obj.location.z = 0
+            obj.keyframe_insert(data_path="scale", index=2, frame=frameT4)  # downscaling
+            obj.keyframe_insert(data_path="location", index=2, frame=frameT4)
+        case "Light":
+            # color mapping
+            # Apply sigmoid function to velocity
+            blue_intensity = sigmoid(1 - velocity)  # Stronger blue for low velocities
+            red_intensity = sigmoid(velocity)  # Stronger red for high velocities
+            # colorVelocity = ( velocity, 0, 1 - velocity, 1.0)
+            colorVelocity = ( red_intensity, 0.0, blue_intensity, 1.0)
+            velocity = velocity * 2
+            brightness = 2 ** (velocity ** 0.5)
+            # Find pincipledBSDF node into material linked with object
+            # mat = obj.data.materials[0]
+            mat = obj.material_slots[0].material
+            nodes = mat.node_tree.nodes
+            principled_node = None
+            for node in nodes:
+                if node.type == "BSDF_PRINCIPLED":
+                    principled_node = node
+                    break            
+            # set initial lighing before note On
+            principled_node.inputs["Emission Strength"].default_value = 0  # Intensité lumineuse
+            principled_node.inputs["Emission Color"].default_value = colorVelocity
+            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT1)
+            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT1)
+            # Upscale lighting at noteNumber on timeOn
+            principled_node.inputs["Emission Strength"].default_value = brightness  # Intensité lumineuse
+            principled_node.inputs["Emission Color"].default_value = colorVelocity
+            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT2)
+            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT2)
+            # Keep actual lighting before note Off
+            principled_node.inputs["Emission Strength"].default_value = brightness  # Intensité lumineuse
+            principled_node.inputs["Emission Color"].default_value = colorVelocity
+            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT3)
+            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT3)
+            # reset ligthing to initial state at noteNumber on timeOff
+            principled_node.inputs["Emission Strength"].default_value = 0  # Intensité lumineuse
+            principled_node.inputs["Emission Color"].default_value = colorVelocity
+            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT4)
+            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT4)
+        case _:
+            wLog("I don't now anything about "+typeAnim)
+
 
 """
 Blender visualisation one BG by channel
 """
-def createBlenderBGAnimation(masterCollection, maxTimeOff):
+def createBlenderBGAnimation(masterCollection, maxTimeOff, typeAnim):
     # Create master BG collection
     BGCollect = create_collection("BarGraph", masterCollection)
 
     # Create model Cubes
-    modelCubeBlack = addCube(hiddenCollection, "modelCubeBlack", matCubeBlack, True, (0, 0, -10), (1,1,1))
-    modelCubeWhite = addCube(hiddenCollection, "modelCubeWhite", matCubeWhite, True, (0, 0, -12), (1,1,1))
+    modelCube = addCube(hiddenCollection, "modelCube", matCubeWhite, True, (0, 0, -12), (1,1,1))
 
     # Create cubes from channel
     channelsCenter = (channelMaxUsed - channelMinUsed) / 2
-    cubeSpace = 1.2
-    for channel in channels:
-        if len(channel.notes) != 0:
-            # Create BG Channel collection
-            BGChannelCollect = create_collection("BG"+str(channel.index), BGCollect)
-            for note in channel.notesUsed:
-                cubeName = "Cube-"+str(channel.index)+"-"+str(note)
-                offsetX = (note - noteMidRange) * cubeSpace
-                offsetY = (channel.index - channelsCenter) * cubeSpace
-                if "#" in midinote_to_note_alpha[note]:
-                    # Duplicate the black model cube
-                    cubeLinked = createDuplicateLinkedObject(BGChannelCollect, modelCubeBlack, cubeName)
-                    cubeLinked.location = (offsetX, offsetY, 0)  # Change instance position
-                else:
-                    # Duplicate the white model cube
-                    cubeLinked = createDuplicateLinkedObject(BGChannelCollect, modelCubeWhite, cubeName)
-                    cubeLinked.location = (offsetX, offsetY, 0)  # Change instance position
-            wLog("BarGraph - create "+str(len(channel.notesUsed))+" cubes for channel "+ str(channel.index) +" (range noteMin-noteMax) ("+str(channel.minNote)+"-"+str(channel.maxNote)+")")
+    cubeSpace = modelCube.scale.x * 1.2 # mean x size of cube + 20 %
+    for numChannel, channel in channels.items():
+        # Create BG Channel collection
+        BGChannelCollect = create_collection("BG"+str(numChannel), BGCollect)
+        for note in channel.notesUsed:
+            cubeName = "Cube-"+str(numChannel)+"-"+str(note)
+            offsetX = (note - noteMidRange) * cubeSpace
+            offsetY = (channel.index - channelsCenter) * cubeSpace
+            cubeLinked = createDuplicateLinkedObject(BGChannelCollect, modelCube, cubeName)
+            cubeLinked.location = (offsetX, offsetY, 0)
+            if "#" in midinote_to_note_alpha[note]:
+                setMaterialWithObjectLink(cubeLinked, color=(0.2, 0.2, 0.2, 1.0)) # Black
+            else:
+                setMaterialWithObjectLink(cubeLinked, color=(0.8, 0.8, 0.8, 1.0)) # White
+        wLog("BarGraph - create "+str(len(channel.notesUsed))+" cubes for channel "+ str(channel.index) +" (range noteMin-noteMax) ("+str(channel.minNote)+"-"+str(channel.maxNote)+")")
 
+    resolutionLimit = round(fps * 0.2)
+    noteUnderLimit = 0
     # Animate cubes accordingly to notes event
-    for channel in channels:
-        if len(channel.notes) != 0:
-            for note in channel.notes:
-                # retrieve object by is name
-                cubeName = "Cube-"+str(channel.index)+"-"+str(note.noteNumber)
-                obj = bDat.objects[cubeName]
-                frameTimeOn = note.timeOn * fps
-                frameTimeOff = note.timeOff * fps
-                velocity = 8 * note.velocity
-                eventNote(obj, frameTimeOn, frameTimeOff, velocity)
-            wLog("BarGraph - Animate cubes for channel " +str(channel.index)+" (notesCount) ("+str(len(channel.notes))+")")
+    for numChannel, channel in channels.items():
+        for note in channel.notes:
+            # retrieve object by is name
+            cubeName = "Cube-"+str(numChannel)+"-"+str(note.noteNumber)
+            obj = bDat.objects[cubeName]
+            frameTimeOn = int(note.timeOn * fps)
+            frameTimeOff = int(note.timeOff * fps)
+            if ( frameTimeOff - frameTimeOn) > resolutionLimit:
+                eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
+            else:
+                eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
+                noteUnderLimit += 1
+        wLog("BarGraph - Animate cubes for channel " +str(numChannel)+" (notesCount) ("+str(len(channel.notes))+"), note recovered under length limit "+str(noteUnderLimit))
 """
 End of BG visualisation
 """
+
+import re
 
 """
 Blender visualisation with barrel organ
@@ -937,144 +1108,91 @@ Blender visualisation with barrel organ
     ticks_per_second = ppqn * tempo / 60
 
 """
-def createBarrelOrganStrip(masterCollection, channel, length):
-    noteRange = (21, 108)  # Piano standard (A0 à C8)
-    notecount = (noteRange[1]-noteRange[0]) + 1
-    noteMiddle = noteRange[0] + math.ceil(notecount / 2)
-    marginExtX = 0
-    marginExtY = 0
-    cellSizeX = 1 # size X for each note in centimeters
-    intervalX = 0 # cellSizeX / 5
-    cellSizeY = 1 # size for each second in centimeters
-    intervalY = 0 # cellSizeY / 5
-    planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + ((notecount -1) * intervalX)
-    length = math.ceil(length) # in second
-    planSizeY = (length + (marginExtY *2)) * (cellSizeY + intervalY)
-    
-    # Create master Strip collection
-    stripCollect = create_collection("Strip", masterCollection)
+def createStripNotes(masterCollection, channelMask, length, typeAnim):
 
-    obj = createRectangularPlane(stripCollect, "BarrelOrganStrip", planSizeX, planSizeY, (-cellSizeX / 2,planSizeY / 2,0))
-    collectToRemove = create_collection("toRemove", stripCollect)
+    # syntax for channelMask
+    # 0
+    # 0,2,3
+    # 0-3,8
+    def parseRange(range_str):
+        """
+        Analyse une chaîne de plage de nombres et retourne une liste des nombres.
+        Exemple d'entrée : "1-5,7,10-12"
+        Exemple de sortie : [1, 2, 3, 4, 5, 7, 10, 11, 12]
+        """
+        numbers = []
+        # Diviser la chaîne en segments individuels
+        segments = range_str.split(',')
 
-    # Create cubes from channel
-    cubeModelLibrary = []  # Store unique cubes by Y size for reuse
+        for segment in segments:
+            match = re.match(r'^(\d+)-(\d+)$', segment)
+            if match:  # Cas d'une plage de type "1-16"
+                start, end = map(int, match.groups())
+                numbers.extend(range(start, end + 1))
+            elif re.match(r'^\d+$', segment):  # Cas d'un seul nombre
+                numbers.append(int(segment))
+            else:
+                raise ValueError(f"Format non valide : {segment}")
 
-    holeSizeX = cellSizeX
-    for noteIndex, note in enumerate(channel.notes):
-        holePosX = (note.noteNumber - noteMiddle) * (cellSizeX + intervalX)
-        holeSizeY = round(((note.timeOff - note.timeOn) * cellSizeY),2)
-        holePosY = ((marginExtY + note.timeOn) * (cellSizeY + intervalY)) + (holeSizeY / 2)
+        return numbers
 
-        nameOfNotePlayed = "Note-" + str(noteIndex)
+    result = parseRange(channelMask)
+    wLog("Channel filter "+channelMask+" "+str(result))
 
-        # create or duplicate linkded object note
-        # Check if a cube with the same height already exists
-        matchingCube = next((cube for size, cube in cubeModelLibrary if size == holeSizeY), None)
-        if matchingCube:
-            # Duplicate the existing note
-            noteObj = createDuplicateLinkedObject(collectToRemove, matchingCube, nameOfNotePlayed)
-            noteObj.location = (holePosX, holePosY, 0)  # Change instance position
-        else:
-            # Create a new note model
-            noteModelObj = addCube(hiddenCollection, nameOfNotePlayed+"-model", matCubeWhite, False, (holePosX, holePosY, -10), (holeSizeX, holeSizeY, 1))
-            cubeModelLibrary.append((holeSizeY, noteModelObj))
-            # Duplicate the existing note
-            noteObj = createDuplicateLinkedObject(collectToRemove, noteModelObj, nameOfNotePlayed)
-            noteObj.location = (holePosX, holePosY, 0)  # Change instance position
+    # Create model Cubes
+    stripModelCube = addCube(hiddenCollection, "StripNotesModelCube", matCubeWhite, False, (0, 0, -5), (1,1,1))
 
-        # Animate note
-        # Be aware to animate duplicate only, never the model one
-        frameTimeOn = note.timeOn * fps
-        frameTimeOff = note.timeOff * fps
-        velocity = 8 * note.velocity
-        eventNote(noteObj, frameTimeOn, frameTimeOff, velocity)
+    for numChannel, channel in channels.items():
+        if numChannel not in result:
+            continue
+        offSetX = numChannel * 70
+        noteRange = (channel.minNote, channel.maxNote)
+        notecount = (noteRange[1]-noteRange[0]) + 1
+        noteMiddle = noteRange[0] + math.ceil(notecount / 2)
+        marginExtX = 3
+        marginExtY = 0 #3
+        cellSizeX = 1 # size X for each note in centimeters
+        intervalX = cellSizeX / 5
+        cellSizeY = 1 # size for each second in centimeters
+        intervalY = 0 # cellSizeY / 5
+        planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + ((notecount -1) * intervalX)
+        length = math.ceil(length) # in second
+        planSizeY = (length + (marginExtY *2)) * (cellSizeY + intervalY)
         
-    wLog("Notes Strip - create & animate "+ str(noteIndex + 1))
+        # Create collections
+        stripCollect = create_collection("Strip-"+str(numChannel), masterCollection)
+        notesCollection = create_collection("Notes-"+str(numChannel), stripCollect)
 
-    # booleanModifier(obj, collectToRemove, "DIFFERENCE")
-    # clearCollection(collectToRemove)
+        sizeX = cellSizeX
+        for noteIndex, note in enumerate(channel.notes):
+            posX = ((note.noteNumber - noteMiddle) * (cellSizeX + intervalX)) + offSetX
+            sizeY = round(((note.timeOff - note.timeOn) * cellSizeY),2)
+            posY = ((marginExtY + note.timeOn) * (cellSizeY + intervalY)) + (sizeY / 2)
+
+            nameOfNotePlayed = "Note-"+str(numChannel)+"-"+ str(noteIndex)
+
+            # Duplicate the existing note
+            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube, nameOfNotePlayed)
+            noteObj.location = (posX, posY, 0) # Set instance position
+            noteObj.scale = (sizeX, sizeY, 1) # Set instance scale
+            # setMaterialWithObjectLink(noteObj, color=(0.9, 0.9, 0.9, 1.0)) # White
+            setMaterialWithObjectLink(noteObj, color=trackColors[note.track]) # dispatched colors by track
+
+            # Animate note
+            # Be aware to animate duplicate only, never the model one
+            frameTimeOn = note.timeOn * fps
+            frameTimeOff = note.timeOff * fps
+            eventNote(noteObj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
+            
+        if notecount % 2 == 0:
+            posX = (-cellSizeX / 2) + offSetX
+        else:
+            posX = (-cellSizeX) + offSetX
+        obj = createRectangularPlane(stripCollect, "NotesStrip-"+str(numChannel), planSizeX, planSizeY, (posX, planSizeY / 2, -stripModelCube.scale.z / 2))
+
+        wLog("Notes Strip channel "+str(numChannel)+" - create & animate "+ str(noteIndex + 1))
 
     return obj
-
-from collections import defaultdict
-
-def createBarrelOrganStripV2(masterCollection, channel, length):
-    # Check if tempo is fixed or not
-    if midiFile.tempo == 0:
-        wLog("BarrelOrgan need fixed tempo for whole midi file")
-        return
-    lengthQuarterNote = midiFile.tempo / 1000000
-    noteRange = (21, 108)  # Piano standard (A0 à C8)
-    notecount = (noteRange[1]-noteRange[0]) + 1
-    noteMiddle = noteRange[0] + math.ceil(notecount / 2)
-    marginExtX = 0
-    marginExtY = 0
-    cellSizeX = 1 # size X for each note in centimeters
-    intervalX = 0 # cellSizeX / 5
-    cellSizeY = 1 # size for each second in centimeters
-    intervalY = 0 # cellSizeY / 5
-    planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + ((notecount -1) * intervalX)
-    length = math.ceil(length) # in second
-    planSizeY = (length + (marginExtY *2)) * (cellSizeY + intervalY)
-
-    # Créer un nouveau mesh et un objet pour le rouleau
-    mesh = bDat.meshes.new("BarrelOrganStripMesh")
-    obj = bDat.objects.new("BarrelOrganStrip", mesh)
-    masterCollection.objects.link(obj)
-
-    # Initialiser BMesh pour le rouleau
-    segmentsCountX = notecount + (notecount - 1) + 2 # mean notes count + intervals count + 2 face for margin external X
-    bm = bmesh.new()
-    bmesh.ops.create_grid(
-        bm,
-        x_segments=int(segmentsCountX),
-        # y_segments=int(planSizeY / cellSizeY),
-        y_segments=int(10), # research
-        size=1  # Normalisé à 1
-    )
-
-    # Redimensionner le maillage à la taille réelle
-    for vert in bm.verts:
-        vert.co.x *= planSizeX / 2
-        # vert.co.y *= planSizeY / 2
-        vert.co.y *= 5
-
-    # face index versus note
-    # 0,177 = margeExtX
-    # 1 = first note
-    # 2 = first intervalX
-    # 3 = second note an so on
-    # 178,353 = margeExtX in second line
-    # 179 = first note in second line
-
-    # work with 1/16 of note for resolution
-    to_remove = []
-    for note in channel.notes:
-        # Dimensions et position du trou
-        sizeY = (note.timeOff - note.timeOn) / (2)
-        numNoteOnRow = note.noteNumber - noteRange[0] + 1
-        intervalCountX = numNoteOnRow - 1
-        indexOfFaceOnRow = 1 + numNoteOnRow + intervalCountX # on any row
-        # Choose face on Y axis
-        # wLog(str(note.noteNumber)+","+str(note.timeOff - note.timeOn))
-
-    for face in bm.faces:
-        if face.index == 0:
-            to_remove.append(face)
-        if face.index == 2:
-            to_remove.append(face)
-        if face.index == 176:
-            to_remove.append(face)
-        if face.index == 354:
-            to_remove.append(face)
-
-    # Supprimer les faces identifiées
-    bmesh.ops.delete(bm, geom=to_remove, context='FACES')
-
-    # Appliquer les modifications et libérer BMesh
-    bm.to_mesh(mesh)
-    bm.free()
 
 """
 Main
@@ -1101,16 +1219,23 @@ timeStart = time.time()
 # path and name of midi file and so on - temporary => replaced when this become an Blender Extension
 path = "W:\\MIDI\\Samples"
 # filename = "MIDI Sample"
+# filename = "MIDI Sample C3toC4"
 # filename = "pianoTest"
-filename = "49f692270904997536e8f5c1070ac880"
+# filename = "T1_CDL"
+# filename = "T1"
+filename = "49f692270904997536e8f5c1070ac880" # Multi channel classical
+# filename = "067dffc37b3770b4f1c246cc7023b64d" # One channel Biggest 35188 notes
+# filename = "a4727cd831e7aff3df843a3da83e8968" # Next test
+# filename = "4cd07d39c89de0f2a3c7b2920a0e0010"
 
 pathMidiFile = path + "\\" + filename + ".mid"
 pathAudioFile = path + "\\" + filename + ".mp3"
-pathJsonFile = path + "\\" + filename + ".json"
 pathLogFile = path + "\\" + filename + ".log"
 
 # Open log file for append
 flog = open(pathLogFile, "w+")
+
+wLog("Python version = "+str(sys.version))
 
 # Hope to have 50 fps at min
 fps = bScn.render.fps
@@ -1126,6 +1251,8 @@ wLog("Midi file path = "+pathMidiFile)
 wLog("Midi type = "+str(midiFile.midiFormat))
 wLog("PPQN = "+str(midiFile.ppqn))
 wLog("Number of tracks = "+str(len(tracks)))
+
+trackColors = generateHSVColors(len(tracks))
 
 # load audio file mp3 with the same name of midi file if exist
 # into sequencer
@@ -1162,30 +1289,42 @@ wLog("note min =  " + str(noteMinAllTracks))
 wLog("note max =  " + str(noteMaxAllTracks))
 wLog("note mid range =  " + str(noteMidRange))
 
-# Create MIDI channel from all tracks
-channels: List[MIDIChannel] = [MIDIChannel() for _ in range(16)]
+from typing import Dict
+
+# Create MIDI channels dynamically based on usage
+channels: Dict[int, MIDIChannel] = {}
 channelMaxUsed = 0
 channelMinUsed = 1000
 maxTimeOff = 0
+
 for track in tracks:
     for note in track.notes:
-        maxTimeOff = max(maxTimeOff,note.timeOff)
+        maxTimeOff = max(maxTimeOff, note.timeOff)
         channelMinUsed = min(channelMinUsed, note.channel)
         channelMaxUsed = max(channelMaxUsed, note.channel)
-        channels[note.channel].notes.append(MIDINote(note.channel,note.noteNumber, note.timeOn, note.timeOff, note.velocity))
-        channels[note.channel].minNote = min(channels[note.channel].minNote,note.noteNumber)
-        channels[note.channel].maxNote = max(channels[note.channel].maxNote,note.noteNumber)
-        channels[note.channel].index = note.channel
-        if note.noteNumber not in channels[note.channel].notesUsed:
-            channels[note.channel].notesUsed.append(note.noteNumber)
+        
+        # If the channel doesn't exist yet, create it
+        if note.channel not in channels:
+            channels[note.channel] = MIDIChannel(index=note.channel)
+        
+        # Update channel with note data
+        channel = channels[note.channel]
+        channel.notes.append(MIDIChannelNote(track.index - 1, note.channel, note.noteNumber, note.timeOn, note.timeOff, note.velocity))
+        channel.minNote = min(channel.minNote, note.noteNumber)
+        channel.maxNote = max(channel.maxNote, note.noteNumber)
+        if note.noteNumber not in channel.notesUsed:
+            channel.notesUsed.append(note.noteNumber)
     wLog("create channel from track "+str(track.index)+" "+track.name)
-wLog("length of MIDI file in seconds =  " + str(maxTimeOff))
+
+wLog("Number of channels created = " + str(len(channels)))
+wLog("length of MIDI file in seconds = " + str(maxTimeOff))
 
 """
 Blender part
 """
 
 setBlenderUnits()
+purge_unused_data()
 masterCollection = create_collection("MTB", bScn.collection)
 hiddenCollection = create_collection("Hidden", masterCollection)
 hiddenCollection.hide_viewport = True
@@ -1195,15 +1334,17 @@ matCubeBlack = bDat.materials.new(name="matCube")
 matCubeBlack.use_nodes = True
 principled = PrincipledBSDFWrapper(matCubeBlack, is_readonly=False)
 principled.base_color = (0.1, 0.1, 0.1)
+principled.emission_color = (1.0, 0.5, 0.0)  # Orange lumineux
+principled.emission_strength = 10.0  # Intensité lumineuse
 
 matCubeWhite = bDat.materials.new(name="matCube")
 matCubeWhite.use_nodes = True
 principled = PrincipledBSDFWrapper(matCubeWhite, is_readonly=False)
 principled.base_color = (0.9, 0.9, 0.9)
 
-createBlenderBGAnimation(masterCollection, maxTimeOff)
-# createBarrelOrganStrip(masterCollection, channels[0], maxTimeOff) # Apply when we have a reasonable amount of notes
-# createBarrelOrganStripV2(masterCollection, channels[0], maxTimeOff)
+# createBlenderBGAnimation(masterCollection, maxTimeOff, typeAnim="Light")
+createBlenderBGAnimation(masterCollection, maxTimeOff, typeAnim="Scale")
+# createStripNotes(masterCollection, "0-3,7", maxTimeOff, typeAnim="Scale")
 
 bScn.frame_end = math.ceil(maxTimeOff + 5)*fps
 
