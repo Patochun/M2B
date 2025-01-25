@@ -1,6 +1,22 @@
 
 Release notes :
 
+MTB V3
+
+- Simplify midiparser to focus only on note events
+    - Check all events to have allways the good deltatime from any events
+    - But memorize only note events (on and off)
+- Remove unused JSON conf file
+- Process channel only if there notes into
+- BarGraph evolve
+    - Color cubes black or white accordingly sharp or not
+    - Center on Y axis from real channels used
+- Retrieve the minimal rythms ticks from midiFile
+- Add Notes Strip visualisation
+- Optimize for BarGraph or Notes Strip with reuse of model object linked to all objects I Need
+- Create Hidden collection to store model object into
+- Réorganize collection
+
 MTB V2
 
 - Add midi channel concept
