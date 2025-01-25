@@ -1,6 +1,25 @@
 
 Release notes :
 
+MTB V5
+
+- Add MIDITrackUsed data into MIDIChannel structure
+    - TODO => is it usefull ? else cleanup !
+- Add information in log
+    - Dispatch count of notes created by track in channel with data table
+- Accordingly to visualisation method, create or not independant material
+    - For the moment, usage only with Light
+- Track index start from 0 instead of 1
+- BGAnimation use track info instead of channel info
+    - To avoid multiple note from different track at same time in the same channel
+        - This case create artefact in animation
+    - No visualisation for note with length under 4 frames
+        - Raise FPS to avoid them is the only way
+- Notes strip
+    - Create a model cube by track to have multiple base color
+    - Create sub collection by track
+    - Include track info in note object
+
 MTB V4
 
 - Purging orphaned data to clean up Blender

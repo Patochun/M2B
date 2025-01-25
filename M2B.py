@@ -8,7 +8,7 @@ Author   : Patochun (Patrick M)
 Mail     : ptkmgr@gmail.com
 YT       : https://www.youtube.com/channel/UCCNXecgdUbUChEyvW3gFWvw
 Create   : 2024-11-11
-Version  : 4.0
+Version  : 5.0
 Compatibility : Blender 4.0 and above
 
 Licence used : GNU GPL v3
@@ -97,12 +97,20 @@ class MIDIChannelNote:
     velocity: float = 0
 
 @dataclass
+class MIDITrackUsed:
+    trackIndex: int = 0
+    name: str = ""
+    noteCount: int = 0
+    notesUsed: List[int] = field(default_factory = list)
+
+@dataclass
 class MIDIChannel:
     index: int = 0
     minNote: int = 1000
     maxNote: int = 0
     notes: List[MIDIChannelNote] = field(default_factory = list)
     notesUsed: List[int] = field(default_factory = list)
+    trackUsed: List[MIDITrackUsed] = field(default_factory = list)
 
 @dataclass
 class MIDITrack:
@@ -721,8 +729,8 @@ def readMIDIFile(path):
                 minDurationInTicks = min(minDurationInTicks, trackState.timeInTicks - noteOnRecord.ticks) # not used yet
         # add track only if exist notes inside
         if bool(notesUsed):
-            trackIndexUsed += 1
             tracks.append(MIDITrack(trackName, trackIndexUsed, minNote, maxNote, notes, notesUsed))
+            trackIndexUsed += 1
     return midiFile, tempoMap, tracks
 
 """
@@ -864,27 +872,40 @@ def createDuplicateLinkedObject(collection, originalObject, name):
     return linkedObject
 
 # Set a new material with Object link mode to object
-def setMaterialWithObjectLink(obj, color):
-    # Create new material
-    mat_new = bDat.materials.new(name="Material-"+obj.name)
-    mat_new.use_nodes = True
-    # Set material with base color
-    principled = mat_new.node_tree.nodes.get("Principled BSDF")
-    principled.inputs["Base Color"].default_value = color
-    # Link material to the object (material independent of shared mesh)
-    if len(obj.material_slots) == 0:
-        obj.data.materials.append(mat_new)  # Add a material slot if it doesn't exist
-    obj.material_slots[0].link = 'OBJECT'
-    obj.material_slots[0].material = mat_new  # Assign the material to the object
+# If typeAnim contains "Light", material needs to be independent
+def setMaterialWithObjectLink(obj, typeAnim, color):
+
+    # If typeAnim contains "Light" => create a new material independent of shared mesh
+    # else do nothing, keep material from obj
+    if "Light" in typeAnim:
+        # Ensure material is independent of shared mesh
+        # Create new material
+        matNew = bpy.data.materials.new(name="Material-" + obj.name)
+        matNew.use_nodes = True
+        # Set material with base color
+        principled = matNew.node_tree.nodes.get("Principled BSDF")
+        if principled is not None:
+            principled.inputs["Base Color"].default_value = color
+        if len(obj.material_slots) == 0:
+            obj.data.materials.append(matNew)  # Add a material slot if it doesn't exist
+        obj.material_slots[0].link = 'OBJECT'
+        obj.material_slots[0].material = matNew  # Assign the material to the object
+    # else:
+        # Material can be linked to the mesh (default behavior)
+        # if len(obj.material_slots) == 0:
+        #     obj.data.materials.append(matNew)  # Add a material slot if it doesn't exist
+        # obj.material_slots[0].link = 'DATA'  # Link material to mesh data
+#        obj.material_slots[0].material = matNew  # Assign the material to the mesh
 
 import colorsys
 
+# Return a list of color r,g,b,a dispatched
 def generateHSVColors(nSeries):
     colors = []
     for i in range(nSeries):
-        hue = i / nSeries  # Espacement uniforme
-        saturation = 0.8    # Saturation élevée pour des couleurs vives
-        value = 0.9         # Luminosité élevée
+        hue = i / nSeries  # uniform space
+        saturation = 0.8    # Saturation high for vibrant color
+        value = 0.9         # High luminosity
         r,g,b = colorsys.hsv_to_rgb(hue, saturation, value)
         colors.append((r,g,b, 1.0))
     return colors
@@ -935,6 +956,7 @@ def eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, velocity):
     if frameTimeOff - frameTimeOn < 2 * eventLenMove:
         eventLenMove = max(1, int((frameTimeOff - frameTimeOn) / 2))
 
+    # T2 and T3 can be the same if there is only 3 frames for animation
     frameT1 = frameTimeOn
     frameT2 = frameTimeOn + eventLenMove
     frameT3 = frameTimeOff - eventLenMove
@@ -1026,51 +1048,101 @@ def eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, velocity):
         case _:
             wLog("I don't now anything about "+typeAnim)
 
+# Parse a formated range in string and return a liste of values
+def parseRange(rangeStr):
+    """
+        Parses a range string and returns a list of numbers.
+        Example input: "1-5,7,10-12"
+        Example output: [1, 2, 3, 4, 5, 7, 10, 11, 12]
+    """
+
+    numbers = []
+    # Divide string in individuals parts
+    segments = rangeStr.split(',')
+
+    for segment in segments:
+        match = re.match(r'^(\d+)-(\d+)$', segment)
+        if match:  # Case of range like "1-16"
+            start, end = map(int, match.groups())
+            numbers.extend(range(start, end + 1))
+        elif re.match(r'^\d+$', segment):  # Case of single number
+            numbers.append(int(segment))
+        else:
+            raise ValueError(f"Format non valide : {segment}")
+
+    return numbers
 
 """
-Blender visualisation one BG by channel
+Blender visualisation one BarGraph by track
 """
-def createBlenderBGAnimation(masterCollection, maxTimeOff, typeAnim):
+def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
+
+    wLog("Create a BarGraph Animation type="+typeAnim)
+
+    listOfSelectedTrack = parseRange(trackMask)
+    wLog("Track filter "+trackMask+" "+str(listOfSelectedTrack))
+
     # Create master BG collection
     BGCollect = create_collection("BarGraph", masterCollection)
 
     # Create model Cubes
-    modelCube = addCube(hiddenCollection, "modelCube", matCubeWhite, True, (0, 0, -12), (1,1,1))
+    modelCubeWhite = addCube(hiddenCollection, "modelCube", matCubeWhite, True, (-1, 0, -12), (1,1,1))
+    modelCubeBlack = addCube(hiddenCollection, "modelCube", matCubeBlack, True, (1, 0, -12), (1,1,1))
 
-    # Create cubes from channel
-    channelsCenter = (channelMaxUsed - channelMinUsed) / 2
-    cubeSpace = modelCube.scale.x * 1.2 # mean x size of cube + 20 %
-    for numChannel, channel in channels.items():
-        # Create BG Channel collection
-        BGChannelCollect = create_collection("BG"+str(numChannel), BGCollect)
-        for note in channel.notesUsed:
-            cubeName = "Cube-"+str(numChannel)+"-"+str(note)
+    # Create cubes from track
+    trackCenter = (len(tracks)-1) / 2
+    cubeSpace = modelCubeWhite.scale.x * 1.2 # mean x size of cube + 20 %
+
+    # Parse track to create BG
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+
+        # create collection
+        BGTrackName = "BG-"+str(trackIndex)
+        BGTrackCollect = create_collection(BGTrackName, BGCollect)
+
+        # one cube per note used
+        for note in track.notesUsed:
+            # create cube
+            cubeName = "Cube-"+str(trackIndex)+"-"+str(note)
             offsetX = (note - noteMidRange) * cubeSpace
-            offsetY = (channel.index - channelsCenter) * cubeSpace
-            cubeLinked = createDuplicateLinkedObject(BGChannelCollect, modelCube, cubeName)
-            cubeLinked.location = (offsetX, offsetY, 0)
-            if "#" in midinote_to_note_alpha[note]:
-                setMaterialWithObjectLink(cubeLinked, color=(0.2, 0.2, 0.2, 1.0)) # Black
+            offsetY = (trackIndex - trackCenter) * cubeSpace
+            if "#" in numNoteToAlpha[note]:
+                cubeLinked = createDuplicateLinkedObject(BGTrackCollect, modelCubeBlack, cubeName)
+                setMaterialWithObjectLink(cubeLinked, typeAnim, color=(0.2, 0.2, 0.2, 1.0)) # Black
             else:
-                setMaterialWithObjectLink(cubeLinked, color=(0.8, 0.8, 0.8, 1.0)) # White
-        wLog("BarGraph - create "+str(len(channel.notesUsed))+" cubes for channel "+ str(channel.index) +" (range noteMin-noteMax) ("+str(channel.minNote)+"-"+str(channel.maxNote)+")")
+                cubeLinked = createDuplicateLinkedObject(BGTrackCollect, modelCubeWhite, cubeName)
+                setMaterialWithObjectLink(cubeLinked, typeAnim, color=(0.8, 0.8, 0.8, 1.0)) # White
+            cubeLinked.location = (offsetX, offsetY, 0)
+
+        wLog("BarGraph - create "+str(len(track.notesUsed))+" cubes for track "+ str(trackIndex) +" (range noteMin-noteMax) ("+str(track.minNote)+"-"+str(track.maxNote)+")")
 
     resolutionLimit = round(fps * 0.2)
-    noteUnderLimit = 0
     # Animate cubes accordingly to notes event
-    for numChannel, channel in channels.items():
-        for note in channel.notes:
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+        notesUnderLimitRecovered = 0
+        notesLost = 0
+        for note in track.notes:
             # retrieve object by is name
-            cubeName = "Cube-"+str(numChannel)+"-"+str(note.noteNumber)
+            cubeName = "Cube-"+str(trackIndex)+"-"+str(note.noteNumber)
             obj = bDat.objects[cubeName]
             frameTimeOn = int(note.timeOn * fps)
             frameTimeOff = int(note.timeOff * fps)
-            if ( frameTimeOff - frameTimeOn) > resolutionLimit:
+            if (frameTimeOff - frameTimeOn) > resolutionLimit:
                 eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
             else:
-                eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
-                noteUnderLimit += 1
-        wLog("BarGraph - Animate cubes for channel " +str(numChannel)+" (notesCount) ("+str(len(channel.notes))+"), note recovered under length limit "+str(noteUnderLimit))
+                # Minimum 3 frames for an animation
+                if (frameTimeOff - frameTimeOn) < 3:
+                    wLog("No visualisation for note "+str(trackIndex)+"-"+str(note.noteNumber)+" "+str(note.timeOn)+" "+str(note.timeOff)+" "+str(frameTimeOn)+" "+str(frameTimeOff))
+                    notesLost += 1
+                else:
+                    eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
+                    notesUnderLimitRecovered += 1
+        wLog("BarGraph - Animate cubes for track " +str(trackIndex)+" (notesCount) ("+str(len(track.notes))+"), notes recovered "+str(notesUnderLimitRecovered)+", notes lost "+str(notesLost))
+
 """
 End of BG visualisation
 """
@@ -1080,7 +1152,7 @@ import re
 """
 Blender visualisation with barrel organ
 
-    Strip simulation from piano, note 21 (A0) to 128 (C8) => 88 notes
+    Strip simulation for piano, note 21 (A0) to 128 (C8) => 88 notes
     A B C D E F G A B C D E F G A B C D E F G A B C D E F G A B C D E F G A B C D E F G A B C D E F G A B C
     0   1             2             3             4             5             6             7             8
     0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -1110,40 +1182,20 @@ Blender visualisation with barrel organ
 """
 def createStripNotes(masterCollection, channelMask, length, typeAnim):
 
-    # syntax for channelMask
-    # 0
-    # 0,2,3
-    # 0-3,8
-    def parseRange(range_str):
-        """
-        Analyse une chaîne de plage de nombres et retourne une liste des nombres.
-        Exemple d'entrée : "1-5,7,10-12"
-        Exemple de sortie : [1, 2, 3, 4, 5, 7, 10, 11, 12]
-        """
-        numbers = []
-        # Diviser la chaîne en segments individuels
-        segments = range_str.split(',')
+    wLog("Create a Strip Notes Animation type="+typeAnim)
 
-        for segment in segments:
-            match = re.match(r'^(\d+)-(\d+)$', segment)
-            if match:  # Cas d'une plage de type "1-16"
-                start, end = map(int, match.groups())
-                numbers.extend(range(start, end + 1))
-            elif re.match(r'^\d+$', segment):  # Cas d'un seul nombre
-                numbers.append(int(segment))
-            else:
-                raise ValueError(f"Format non valide : {segment}")
+    listOfSelectedChannel = parseRange(channelMask)
+    wLog("Channel filter "+channelMask+" "+str(listOfSelectedChannel))
 
-        return numbers
-
-    result = parseRange(channelMask)
-    wLog("Channel filter "+channelMask+" "+str(result))
-
-    # Create model Cubes
-    stripModelCube = addCube(hiddenCollection, "StripNotesModelCube", matCubeWhite, False, (0, 0, -5), (1,1,1))
+    # Create model Cubes, one per track
+    stripModelCube = []
+    for track in tracks:
+        obj = addCube(hiddenCollection, "StripNotesModelCube-T"+str(track.index), matCubeBlack, False, (track.index, 0, -5), (1,1,1))
+        setMaterialWithObjectLink(obj, "Light", color=trackColors[track.index]) # dispatched colors by track
+        stripModelCube.append(obj)
 
     for numChannel, channel in channels.items():
-        if numChannel not in result:
+        if numChannel not in listOfSelectedChannel:
             continue
         offSetX = numChannel * 70
         noteRange = (channel.minNote, channel.maxNote)
@@ -1154,29 +1206,27 @@ def createStripNotes(masterCollection, channelMask, length, typeAnim):
         cellSizeX = 1 # size X for each note in centimeters
         intervalX = cellSizeX / 5
         cellSizeY = 1 # size for each second in centimeters
-        intervalY = 0 # cellSizeY / 5
+        intervalY = cellSizeY / 5
         planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + ((notecount -1) * intervalX)
         length = math.ceil(length) # in second
         planSizeY = (length + (marginExtY *2)) * (cellSizeY + intervalY)
         
         # Create collections
-        stripCollect = create_collection("Strip-"+str(numChannel), masterCollection)
-        notesCollection = create_collection("Notes-"+str(numChannel), stripCollect)
+        stripCollect = create_collection("Strip-Ch"+str(numChannel), masterCollection)
+        notesCollection = create_collection("Notes-Ch"+str(numChannel), stripCollect)
 
         sizeX = cellSizeX
         for noteIndex, note in enumerate(channel.notes):
             posX = ((note.noteNumber - noteMiddle) * (cellSizeX + intervalX)) + offSetX
             sizeY = round(((note.timeOff - note.timeOn) * cellSizeY),2)
             posY = ((marginExtY + note.timeOn) * (cellSizeY + intervalY)) + (sizeY / 2)
-
-            nameOfNotePlayed = "Note-"+str(numChannel)+"-"+ str(noteIndex)
+            nameOfNotePlayed = "Note-"+str(numChannel)+"-"+str(noteIndex)
 
             # Duplicate the existing note
-            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube, nameOfNotePlayed)
+            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube[note.track], nameOfNotePlayed)
             noteObj.location = (posX, posY, 0) # Set instance position
             noteObj.scale = (sizeX, sizeY, 1) # Set instance scale
-            # setMaterialWithObjectLink(noteObj, color=(0.9, 0.9, 0.9, 1.0)) # White
-            setMaterialWithObjectLink(noteObj, color=trackColors[note.track]) # dispatched colors by track
+            setMaterialWithObjectLink(noteObj, typeAnim, color=trackColors[note.track]) # dispatched colors by track
 
             # Animate note
             # Be aware to animate duplicate only, never the model one
@@ -1188,7 +1238,7 @@ def createStripNotes(masterCollection, channelMask, length, typeAnim):
             posX = (-cellSizeX / 2) + offSetX
         else:
             posX = (-cellSizeX) + offSetX
-        obj = createRectangularPlane(stripCollect, "NotesStrip-"+str(numChannel), planSizeX, planSizeY, (posX, planSizeY / 2, -stripModelCube.scale.z / 2))
+        obj = createRectangularPlane(stripCollect, "NotesStrip-"+str(numChannel), planSizeX, planSizeY, (posX, planSizeY / 2, -stripModelCube[0].scale.z / 2))
 
         wLog("Notes Strip channel "+str(numChannel)+" - create & animate "+ str(noteIndex + 1))
 
@@ -1200,7 +1250,7 @@ Main
 
 # To convert easily from midi notation to name of note
 # C4 is median DO on piano keyboard and is notated 60
-midinote_to_note_alpha = {
+numNoteToAlpha = {
  0:   "C",   1: "C#",   2: "D",   3: "D#",   4: "E",   5: "F",   6: "F#",   7: "G",   8: "G#",   9: "A",  10: "A#",  11: "B",
  12:  "C",  13: "C#",  14: "D",  15: "D#",  16: "E",  17: "F",  18: "F#",  19: "G",  20: "G#",  21: "A",  22: "A#",  23: "B",
  24:  "C",  25: "C#",  26: "D",  27: "D#",  28: "E",  29: "F",  30: "F#",  31: "G",  32: "G#",  33: "A",  34: "A#",  35: "B",
@@ -1221,9 +1271,9 @@ path = "W:\\MIDI\\Samples"
 # filename = "MIDI Sample"
 # filename = "MIDI Sample C3toC4"
 # filename = "pianoTest"
-# filename = "T1_CDL"
+filename = "T1_CDL"
 # filename = "T1"
-filename = "49f692270904997536e8f5c1070ac880" # Multi channel classical
+# filename = "49f692270904997536e8f5c1070ac880" # Multi channel classical
 # filename = "067dffc37b3770b4f1c246cc7023b64d" # One channel Biggest 35188 notes
 # filename = "a4727cd831e7aff3df843a3da83e8968" # Next test
 # filename = "4cd07d39c89de0f2a3c7b2920a0e0010"
@@ -1252,6 +1302,7 @@ wLog("Midi type = "+str(midiFile.midiFormat))
 wLog("PPQN = "+str(midiFile.ppqn))
 wLog("Number of tracks = "+str(len(tracks)))
 
+# generate a track count list of dispatched colors
 trackColors = generateHSVColors(len(tracks))
 
 # load audio file mp3 with the same name of midi file if exist
@@ -1306,17 +1357,41 @@ for track in tracks:
         # If the channel doesn't exist yet, create it
         if note.channel not in channels:
             channels[note.channel] = MIDIChannel(index=note.channel)
-        
+       
         # Update channel with note data
         channel = channels[note.channel]
-        channel.notes.append(MIDIChannelNote(track.index - 1, note.channel, note.noteNumber, note.timeOn, note.timeOff, note.velocity))
+        channel.notes.append(MIDIChannelNote(track.index, note.channel, note.noteNumber, note.timeOn, note.timeOff, note.velocity))
         channel.minNote = min(channel.minNote, note.noteNumber)
         channel.maxNote = max(channel.maxNote, note.noteNumber)
+
+        # Update noteUsed
         if note.noteNumber not in channel.notesUsed:
             channel.notesUsed.append(note.noteNumber)
+
+        # Update trackUsed and count notes per track
+        track_found = next((t for t in channel.trackUsed if t.trackIndex == track.index), None)
+        if not track_found:
+            # Add track information if it doesn't exist yet
+            track_found = channel.trackUsed.append(MIDITrackUsed(track.index, track.name, 1))
+        else:
+            # Increment note count for this track
+            track_found.noteCount += 1
+
     wLog("create channel from track "+str(track.index)+" "+track.name)
 
 wLog("Number of channels created = " + str(len(channels)))
+wLog("Detailled channel contents:")
+wLog("---------------------------")
+for numChannel, channel in channels.items():
+    wLog("- Channel " + str(channel.index))
+    wLog("  - Notes Used  = " + str(channel.notesUsed))
+    wLog("  - Notes Count = " + str(len(channel.notes)))
+    wLog("  - Track dispatch")
+    for track in channel.trackUsed:
+        wLog("    - Tracks Index = " + str(track.trackIndex))
+        wLog("    - Tracks Name  = " + track.name)
+        wLog("    - Notes Count  = " + str(track.noteCount))
+
 wLog("length of MIDI file in seconds = " + str(maxTimeOff))
 
 """
@@ -1334,17 +1409,16 @@ matCubeBlack = bDat.materials.new(name="matCube")
 matCubeBlack.use_nodes = True
 principled = PrincipledBSDFWrapper(matCubeBlack, is_readonly=False)
 principled.base_color = (0.1, 0.1, 0.1)
-principled.emission_color = (1.0, 0.5, 0.0)  # Orange lumineux
-principled.emission_strength = 10.0  # Intensité lumineuse
 
 matCubeWhite = bDat.materials.new(name="matCube")
 matCubeWhite.use_nodes = True
 principled = PrincipledBSDFWrapper(matCubeWhite, is_readonly=False)
 principled.base_color = (0.9, 0.9, 0.9)
 
-# createBlenderBGAnimation(masterCollection, maxTimeOff, typeAnim="Light")
-createBlenderBGAnimation(masterCollection, maxTimeOff, typeAnim="Scale")
-# createStripNotes(masterCollection, "0-3,7", maxTimeOff, typeAnim="Scale")
+createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Scale")
+# createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Light")
+# createStripNotes(masterCollection, "3,9,11", maxTimeOff, typeAnim="Scale")
+# createStripNotes(masterCollection, "0-15", maxTimeOff, typeAnim="Light")
 
 bScn.frame_end = math.ceil(maxTimeOff + 5)*fps
 
