@@ -1,6 +1,42 @@
 
 Release notes :
 
+MTB V6
+
+- Remove channels objects and work only with track
+    - Channel is a data used by device MIDI. Not very usefull in visualisation context
+    - Channel data still remain in track.notes
+    - Cleaning channels object in code
+- Blender object refunded (for performance and simplicity)
+    - Use tracks instead channels
+    - One shared mesh with 3 custom attributes :
+        - baseColor
+        - emissionColor
+        - emissionStrength
+    - One shared material (6 nodes) with
+        - named matGlobalCustom
+        - 3 attributes nodes
+            - attribute baseColor linked on first colorRamp
+            - attribute emissionColor linked on second colorRamp
+            - attribute emissionStrength linked on emission Strength of principleBSDF
+        - 1 principleBSDF
+        - 2 colorRamp
+            - 1 for baseColor (black, white, red, Yellow, green, cyan, blue, purple)
+            - 1 for emissionColor (blue to red)
+- Notes strip
+    - Use tracks instead channels
+    - Tracks are interlaced on same strip
+- WaterFall (added)
+    - Use tracks
+- EventNote refunded and renamed noteAnimate
+    - Take care about short note < 3 frames
+    - Take care about previous note and nex note to avoid interlace
+    - Use attributes for Light (baseColor,emissionColor,emissionStrength) from each note object
+    - Now, can manage multiple animType Scale, Light for each not object
+- Add compositor
+    - Node glare with blooming
+- Cleaning import    
+
 MTB V5
 
 - Add MIDITrackUsed data into MIDIChannel structure

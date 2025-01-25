@@ -8,7 +8,7 @@ Author   : Patochun (Patrick M)
 Mail     : ptkmgr@gmail.com
 YT       : https://www.youtube.com/channel/UCCNXecgdUbUChEyvW3gFWvw
 Create   : 2024-11-11
-Version  : 5.0
+Version  : 6.0
 Compatibility : Blender 4.0 and above
 
 Licence used : GNU GPL v3
@@ -88,29 +88,11 @@ class MIDINote:
 from typing import List
 
 @dataclass
-class MIDIChannelNote:
-    track: int = 0
-    channel: int = 0
-    noteNumber: int = 0
-    timeOn: float = 0
-    timeOff: float = 0
-    velocity: float = 0
-
-@dataclass
 class MIDITrackUsed:
     trackIndex: int = 0
     name: str = ""
     noteCount: int = 0
     notesUsed: List[int] = field(default_factory = list)
-
-@dataclass
-class MIDIChannel:
-    index: int = 0
-    minNote: int = 1000
-    maxNote: int = 0
-    notes: List[MIDIChannelNote] = field(default_factory = list)
-    notesUsed: List[int] = field(default_factory = list)
-    trackUsed: List[MIDITrackUsed] = field(default_factory = list)
 
 @dataclass
 class MIDITrack:
@@ -151,7 +133,6 @@ class MIDITrack:
         return MIDITrack(self.name, self.index, self.minNote, self.maxNote, [n.copy() for n in self.notes])
 
 import struct
-from dataclasses import dataclass
 
 # Channel events
 @dataclass
@@ -773,6 +754,34 @@ def find_collection(context, item):
         return collections[0]
     return context.scene.collection
 
+def collapseCollectionInOutliner(collectionName):
+    """
+    Collapses a collection in the outliner by name.
+    Args:
+        collection_name (str): The name of the collection to collapse.
+    """
+    # Iterate through all areas in the current screen to find the OUTLINER
+    for area in bCon.screen.areas:
+        if area.type == 'OUTLINER':
+            # Set the context override for the OUTLINER area
+            with bCon.temp_override(area=area):
+                # Loop through the outliner and attempt to find the collection
+                for region in area.regions:
+                    if region.type == 'WINDOW':
+                        override = {
+                            'area': area,
+                            'region': region,
+                            'window': bpy.context.window,
+                            'screen': bpy.context.screen,
+                        }
+                        try:
+                            bOps.outliner.item_openclose(override, open=False)
+                        except RuntimeError as e:
+                            print(f"Failed to collapse collection '{collectionName}': {e}")
+            break
+    else:
+        print("No OUTLINER area found in the current context.")
+       
 # Create collection
 def create_collection(collection_name, parent_collection):
     # delete if exist
@@ -784,6 +793,7 @@ def create_collection(collection_name, parent_collection):
     # create a new one
     new_collection = bDat.collections.new(collection_name)
     parent_collection.children.link(new_collection)
+
     return new_collection
 
 # Delete all objects from a collection
@@ -832,13 +842,43 @@ def purge_unused_data():
     # Log the results
     wLog("Purging complete. Orphaned data cleaned up.")
 
+def createCustomAttributes(obj):
+    # Add custom attributes
+    obj["baseColor"] = 0.0  # Base color as a float
+    obj.id_properties_ui("baseColor").update(
+        min=0.0,  # Minimum value
+        max=1.0,  # Maximum value
+        step=0.01,  # Step size for the slider
+        description="Color factor for base Color"
+    )
+
+    obj["emissionStrength"] = 0.0  # Emission strength as a float
+    obj.id_properties_ui("emissionStrength").update(
+        min=0.0,  # Minimum value
+        soft_min=0.0,  # Soft minimum for UI
+        soft_max=10.0,  # Soft maximum for UI
+        description="Strength of the emission"
+    )
+
+    obj["emissionColor"] = 0.0  # Emission color as a float
+    obj.id_properties_ui("emissionColor").update(
+        min=0.0,  # Minimum value
+        max=1.0,  # Maximum value
+        step=0.01,  # Step size for the slider
+        description="Color factor for the emission (0 to 1)"
+    )
+    
+    return
+
 # Create Rectangular Plane
-def createRectangularPlane(collection, name="RectanglePlane", width=1, height=1, location=(0, 0, 0)):
+def createRectangularPlane(collection, name, material, width=1, height=1, location=(0, 0, 0)):
     bOps.mesh.primitive_plane_add(size=1, location=location)
     plane = bCon.active_object
     plane.name = name
     plane.scale[0] = width  # Adjust width (X)
     plane.scale[1] = height  # Adjust heigth (Y)
+    plane.data.materials.append(material)
+    createCustomAttributes(plane)
     # bOps.object.transform_apply(location=True, rotation=False, scale=True)    
     collect_to_unlink = find_collection(bCon, plane)
     collection.objects.link(plane)
@@ -853,6 +893,7 @@ def addCube(collection, name, material, bevel=False, location=(0,0,0), scale=(1,
     cube.location = location
     cube.scale = scale
     cube.data.materials.append(material)
+    createCustomAttributes(cube)
     if bevel:
         bOps.object.modifier_add(type="BEVEL")
         bOps.object.modifier_apply(modifier="BEVEL")
@@ -947,106 +988,91 @@ def sigmoid(x, k=10):
     """Apply a sigmoid function to a value."""
     return 1 / (1 + math.exp(-k * (x - 0.5)))
 
-# Affect obj with note event accordingly to typeAnim
+# Affect obj with note event accordingly to typeAnim and data from note
 # index = 2 mean Z axis
-def eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, velocity):
+def noteAnimate(Obj, typeAnim, note, previousNote, nextNote):
 
-    eventLenMove = round(fps * 0.1) # Lenght (in frames) before and after event for moving to it, 10% of FPS
-    # Test length minimum (not under eventlenmove * 2) => Clamp
-    if frameTimeOff - frameTimeOn < 2 * eventLenMove:
-        eventLenMove = max(1, int((frameTimeOff - frameTimeOn) / 2))
+    eventLenMove = math.ceil(fps * 0.1) # Length (in frames) before and after event for moving to it, 10% of FPS
 
-    # T2 and T3 can be the same if there is only 3 frames for animation
+    frameTimeOn = int(note.timeOn * fps)
+    frameTimeOff = int(note.timeOff * fps)
+
+    # reevaluate note length if too short
+    if (frameTimeOff - frameTimeOn) < 3:
+        frameTimeOff = frameTimeOn + 2
+        eventLenMove = 1
+
+    # reevaluate eventLenMove length if too long
+    if (eventLenMove * 2) >= (frameTimeOff - frameTimeOn):
+        eventLenMove = int((frameTimeOff - frameTimeOn) / 2)
+
+    # Calculate the frame time off for the previous note
+    if previousNote:
+        frameTimeOffPrevious = int(previousNote.timeOff * fps)
+    else:
+        frameTimeOffPrevious = frameTimeOn
+
+    # Calculate the frame time on for the next note
+    if nextNote:
+        frameTimeOnNext = int(nextNote.timeOn * fps)
+    else:
+        frameTimeOnNext = frameTimeOff
+
+    # Exclude animation if the note is interlaced to the previous or next note
+    if frameTimeOn < frameTimeOffPrevious or frameTimeOff > frameTimeOnNext:
+        return
+
     frameT1 = frameTimeOn
     frameT2 = frameTimeOn + eventLenMove
     frameT3 = frameTimeOff - eventLenMove
     frameT4 = frameTimeOff
 
-    match typeAnim:
-        case "OldScale":
-            velocity = 8 * velocity
-            # set initial scale cube before acting
-            obj.scale.z = 1
-            obj.location.z = 0
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOn - eventLenMove)  # before upscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOn - eventLenMove)  
-            # Upscale cube at noteNumber on timeOn
-            obj.scale.z = velocity
-            obj.location.z = ((velocity - 1) / 2)
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOn)  # upscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOn)
-            # set actual scale cube before acting
-            obj.scale.z = velocity
-            obj.location.z = ((velocity - 1) / 2)
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOff - eventLenMove) # before downscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOff - eventLenMove)
-            # downscale cube at noteNumber on timeOff
-            obj.scale.z = 1
-            obj.location.z = 0
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameTimeOff)  # downscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameTimeOff)
-        case "Scale":
-            velocity = 8 * velocity
-            # set initial scale cube before acting
-            obj.scale.z = 1
-            obj.location.z = 0
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameT1)  # before upscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameT1)
-            # Upscale cube at noteNumber on timeOn
-            obj.scale.z = velocity
-            obj.location.z = ((velocity - 1) / 2)
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameT2)  # upscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameT2)
-            # set actual scale cube before acting
-            obj.scale.z = velocity
-            obj.location.z = ((velocity - 1) / 2)
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameT3) # before downscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameT3)
-            # downscale cube at noteNumber on timeOff
-            obj.scale.z = 1
-            obj.location.z = 0
-            obj.keyframe_insert(data_path="scale", index=2, frame=frameT4)  # downscaling
-            obj.keyframe_insert(data_path="location", index=2, frame=frameT4)
-        case "Light":
-            # color mapping
-            # Apply sigmoid function to velocity
-            blue_intensity = sigmoid(1 - velocity)  # Stronger blue for low velocities
-            red_intensity = sigmoid(velocity)  # Stronger red for high velocities
-            # colorVelocity = ( velocity, 0, 1 - velocity, 1.0)
-            colorVelocity = ( red_intensity, 0.0, blue_intensity, 1.0)
-            velocity = velocity * 2
-            brightness = 2 ** (velocity ** 0.5)
-            # Find pincipledBSDF node into material linked with object
-            # mat = obj.data.materials[0]
-            mat = obj.material_slots[0].material
-            nodes = mat.node_tree.nodes
-            principled_node = None
-            for node in nodes:
-                if node.type == "BSDF_PRINCIPLED":
-                    principled_node = node
-                    break            
-            # set initial lighing before note On
-            principled_node.inputs["Emission Strength"].default_value = 0  # Intensité lumineuse
-            principled_node.inputs["Emission Color"].default_value = colorVelocity
-            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT1)
-            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT1)
-            # Upscale lighting at noteNumber on timeOn
-            principled_node.inputs["Emission Strength"].default_value = brightness  # Intensité lumineuse
-            principled_node.inputs["Emission Color"].default_value = colorVelocity
-            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT2)
-            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT2)
-            # Keep actual lighting before note Off
-            principled_node.inputs["Emission Strength"].default_value = brightness  # Intensité lumineuse
-            principled_node.inputs["Emission Color"].default_value = colorVelocity
-            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT3)
-            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT3)
-            # reset ligthing to initial state at noteNumber on timeOff
-            principled_node.inputs["Emission Strength"].default_value = 0  # Intensité lumineuse
-            principled_node.inputs["Emission Color"].default_value = colorVelocity
-            node.inputs["Emission Color"].keyframe_insert(data_path="default_value", frame=frameT4)
-            node.inputs["Emission Strength"].keyframe_insert(data_path="default_value", frame=frameT4)
-        case _:
-            wLog("I don't now anything about "+typeAnim)
+    # Split the typeAnim string by commas to handle multiple types of animation
+    types = typeAnim.split(',')
+    for animation_type in types:
+        match animation_type.strip():  # Remove extra spaces and match each animation type
+            case "Scale":
+                velocity = 8 * note.velocity
+                # set initial scale cube before acting (T1)
+                Obj.scale.z = 1
+                Obj.location.z = 0
+                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT1)  # before upscaling
+                Obj.keyframe_insert(data_path="location", index=2, frame=frameT1)
+                # Upscale cube at noteNumber on timeOn (T2)
+                Obj.scale.z = velocity
+                Obj.location.z = ((velocity - 1) / 2)
+                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT2)  # upscaling
+                Obj.keyframe_insert(data_path="location", index=2, frame=frameT2)
+                # set actual scale cube before acting (T3)
+                Obj.scale.z = velocity
+                Obj.location.z = ((velocity - 1) / 2)
+                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT3) # before downscaling
+                Obj.keyframe_insert(data_path="location", index=2, frame=frameT3)
+                # downscale cube at noteNumber on timeOff (T4)
+                Obj.scale.z = 1
+                Obj.location.z = 0
+                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT4)  # downscaling
+                Obj.keyframe_insert(data_path="location", index=2, frame=frameT4)
+            case "Light":
+                brightness = note.velocity * 20 # 2 ** (velocity ** 10)
+                # set initial lighing before note On (T1)
+                Obj["emissionColor"] = note.velocity
+                Obj["emissionStrength"] = 0.0
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT1)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
+                # Upscale lighting on timeOn (T2)
+                Obj["emissionStrength"] = brightness
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT2)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
+                # Keep actual lighting before note Off (T3)
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT3)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT3)
+                # reset ligthing to initial state on timeOff (T4)
+                Obj["emissionStrength"] = 0.0
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT4)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
+            case _:
+                wLog("I don't now anything about "+typeAnim)
 
 # Parse a formated range in string and return a liste of values
 def parseRange(rangeStr):
@@ -1070,37 +1096,163 @@ def parseRange(rangeStr):
         else:
             raise ValueError(f"Format non valide : {segment}")
 
+    wLog("Track filter used = "+str(numbers))
     return numbers
+
+# Create a global material with custom object attributes for base color, emission color and emission strength
+def CreateMatGlobalCustom():
+    materialName = "GlobalCubeMaterial"
+    if materialName not in bpy.data.materials:
+        mat = bpy.data.materials.new(name=materialName)
+        mat.use_nodes = True
+    else:
+        mat = bpy.data.materials[materialName]
+
+    # Configure the material nodes
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    # Add necessary nodes
+    output = nodes.new(type="ShaderNodeOutputMaterial")
+    output.location = (600, 0)
+
+    principledBSDF = nodes.new(type="ShaderNodeBsdfPrincipled")
+    principledBSDF.location = (200, 0)
+
+    attributeBaseColor = nodes.new(type="ShaderNodeAttribute")
+    attributeBaseColor.location = (-400, 100)
+    attributeBaseColor.attribute_name = "baseColor"
+    attributeBaseColor.attribute_type = 'OBJECT'
+
+    colorRampBase = nodes.new(type="ShaderNodeValToRGB")
+    colorRampBase.location = (-200, 100)
+    colorRampBase.color_ramp.interpolation = 'LINEAR'  # Ensure linear interpolation
+    colorRampBase.color_ramp.elements.new(0.01)  # Add a stop at 0.20
+    colorRampBase.color_ramp.elements.new(0.02)  # Add a stop at 0.20
+    colorRampBase.color_ramp.elements.new(0.20)  # Add a stop at 0.20
+    colorRampBase.color_ramp.elements.new(0.40)  # Add a stop at 0.40
+    colorRampBase.color_ramp.elements.new(0.60)  # Add a stop at 0.60
+    colorRampBase.color_ramp.elements.new(0.80)  # Add a stop at 0.80
+    colorRampBase.color_ramp.elements[0].color = (0, 0, 0, 1)  # Black 0.0
+    colorRampBase.color_ramp.elements[1].color = (1, 1, 1, 1)  # White 0.01
+    colorRampBase.color_ramp.elements[2].color = (1, 0, 0, 1)  # Red 0.02
+    colorRampBase.color_ramp.elements[3].color = (1, 1, 0, 1)  # Yellow 0.2
+    colorRampBase.color_ramp.elements[4].color = (0, 1, 0, 1)  # Green 0.4
+    colorRampBase.color_ramp.elements[5].color = (0, 1, 1, 1)  # Cyan 0.6
+    colorRampBase.color_ramp.elements[6].color = (0, 0, 1, 1)  # Blue 0.8
+    colorRampBase.color_ramp.elements[7].color = (1, 0, 1, 1)  # Purple 1.0
+
+    attributeEmissionStrength = nodes.new(type="ShaderNodeAttribute")
+    attributeEmissionStrength.location = (-400, -300)
+    attributeEmissionStrength.attribute_name = "emissionStrength"
+    attributeEmissionStrength.attribute_type = 'OBJECT'
+
+    attributeEmissionColor = nodes.new(type="ShaderNodeAttribute")
+    attributeEmissionColor.location = (-400, -100)
+    attributeEmissionColor.attribute_name = "emissionColor"
+    attributeEmissionColor.attribute_type = 'OBJECT'
+
+    colorRampEmission = nodes.new(type="ShaderNodeValToRGB")
+    colorRampEmission.location = (-200, -100)
+    colorRampEmission.color_ramp.interpolation = 'LINEAR'  # Ensure linear interpolation
+    colorRampEmission.color_ramp.elements[0].color = (0, 0, 1, 1)  # Blue
+    colorRampEmission.color_ramp.elements[1].color = (1, 0, 0, 1)  # Red
+
+    # Connect the nodes
+    links.new(attributeBaseColor.outputs["Fac"], colorRampBase.inputs["Fac"])  # Emission color
+    links.new(attributeEmissionStrength.outputs["Fac"], principledBSDF.inputs["Emission Strength"])  # Emission strength
+    links.new(attributeEmissionColor.outputs["Fac"], colorRampEmission.inputs["Fac"])  # Emission color
+    links.new(colorRampBase.outputs["Color"], principledBSDF.inputs["Base Color"])  # Base color
+    links.new(colorRampEmission.outputs["Color"], principledBSDF.inputs["Emission Color"])  # Emission color
+    links.new(principledBSDF.outputs["BSDF"], output.inputs["Surface"])  # Output surface
+
+    return mat
+
+def createCompositorNodes():
+    # Enable the compositor
+    bCon.scene.use_nodes = True
+    nodeTree = bCon.scene.node_tree
+
+    # Remove existing nodes
+    for node in nodeTree.nodes:
+        nodeTree.nodes.remove(node)
+
+    # Add necessary nodes
+    renderLayersNode = nodeTree.nodes.new(type='CompositorNodeRLayers')
+    renderLayersNode.location = (0, 0)
+
+    glareNode = nodeTree.nodes.new(type='CompositorNodeGlare')
+    glareNode.location = (300, 0)
+
+    # Configure the Glare node
+    glareNode.glare_type = 'BLOOM'
+    glareNode.quality = 'HIGH'
+    glareNode.mix = 0.0
+    glareNode.threshold = 1.6
+    glareNode.size = 6
+
+    compositeNode = nodeTree.nodes.new(type='CompositorNodeComposite')
+    compositeNode.location = (600, 0)
+
+    # Connect the nodes
+    links = nodeTree.links
+    links.new(renderLayersNode.outputs['Image'], glareNode.inputs['Image'])
+    links.new(glareNode.outputs['Image'], compositeNode.inputs['Image'])
+    
+    return
+
+def viewportShadingRendered():
+    # Enable viewport shading in Rendered mode
+    for area in bCon.screen.areas:
+        if area.type == 'VIEW_3D':
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    space.shading.type = 'RENDERED'
+
+    # Enable compositor (this ensures nodes are active)
+    bpy.context.scene.use_nodes = True
+
+    # Ensure compositor updates are enabled
+    bpy.context.scene.render.use_compositing = True
+    bpy.context.scene.render.use_sequencer = False  # Disable sequencer if not needed
+    
+    return
 
 """
 Blender visualisation one BarGraph by track
 """
 def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
+    # noteMidRange is a global variable
 
     wLog("Create a BarGraph Animation type="+typeAnim)
 
     listOfSelectedTrack = parseRange(trackMask)
-    wLog("Track filter "+trackMask+" "+str(listOfSelectedTrack))
 
     # Create master BG collection
     BGCollect = create_collection("BarGraph", masterCollection)
 
     # Create model Cubes
-    modelCubeWhite = addCube(hiddenCollection, "modelCube", matCubeWhite, True, (-1, 0, -12), (1,1,1))
-    modelCubeBlack = addCube(hiddenCollection, "modelCube", matCubeBlack, True, (1, 0, -12), (1,1,1))
+    BGModelCube = addCube(hiddenCollection, "BGModelCube", matGlobalCustom, False, (0, 0, -5), (1,1,1))
 
     # Create cubes from track
     trackCenter = (len(tracks)-1) / 2
-    cubeSpace = modelCubeWhite.scale.x * 1.2 # mean x size of cube + 20 %
+    cubeSpace = BGModelCube.scale.x * 1.2 # mean x size of cube + 20 %
 
+    trackCount = 0
+    noteMin = 1000
+    noteMax = 0
     # Parse track to create BG
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
 
+        noteMin = min(noteMin, track.minNote)
+        noteMax = max(noteMax, track.maxNote)
         # create collection
         BGTrackName = "BG-"+str(trackIndex)
         BGTrackCollect = create_collection(BGTrackName, BGCollect)
+        trackCount += 1
 
         # one cube per note used
         for note in track.notesUsed:
@@ -1108,40 +1260,46 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
             cubeName = "Cube-"+str(trackIndex)+"-"+str(note)
             offsetX = (note - noteMidRange) * cubeSpace
             offsetY = (trackIndex - trackCenter) * cubeSpace
-            if "#" in numNoteToAlpha[note]:
-                cubeLinked = createDuplicateLinkedObject(BGTrackCollect, modelCubeBlack, cubeName)
-                setMaterialWithObjectLink(cubeLinked, typeAnim, color=(0.2, 0.2, 0.2, 1.0)) # Black
-            else:
-                cubeLinked = createDuplicateLinkedObject(BGTrackCollect, modelCubeWhite, cubeName)
-                setMaterialWithObjectLink(cubeLinked, typeAnim, color=(0.8, 0.8, 0.8, 1.0)) # White
+            cubeLinked = createDuplicateLinkedObject(BGTrackCollect, BGModelCube, cubeName)
             cubeLinked.location = (offsetX, offsetY, 0)
-
+            if "#" in numNoteToAlpha[note]:
+                cubeLinked["baseColor"] = 0.0 # Black
+            else:
+                cubeLinked["baseColor"] = 0.01 # White
+                
         wLog("BarGraph - create "+str(len(track.notesUsed))+" cubes for track "+ str(trackIndex) +" (range noteMin-noteMax) ("+str(track.minNote)+"-"+str(track.maxNote)+")")
 
-    resolutionLimit = round(fps * 0.2)
+    planSizeX = (noteMax-noteMin+1) * cubeSpace
+    planSizeY = trackCount * cubeSpace
+    obj = createRectangularPlane(BGCollect, "BGPlane", matGlobalCustom, planSizeX, planSizeY, (0, 0, (-BGModelCube.scale.z / 2)*1.05))
+    obj["baseColor"] = 0.01 # White
+
     # Animate cubes accordingly to notes event
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
-        notesUnderLimitRecovered = 0
-        notesLost = 0
-        for note in track.notes:
-            # retrieve object by is name
-            cubeName = "Cube-"+str(trackIndex)+"-"+str(note.noteNumber)
-            obj = bDat.objects[cubeName]
-            frameTimeOn = int(note.timeOn * fps)
-            frameTimeOff = int(note.timeOff * fps)
-            if (frameTimeOff - frameTimeOn) > resolutionLimit:
-                eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
-            else:
-                # Minimum 3 frames for an animation
-                if (frameTimeOff - frameTimeOn) < 3:
-                    wLog("No visualisation for note "+str(trackIndex)+"-"+str(note.noteNumber)+" "+str(note.timeOn)+" "+str(note.timeOff)+" "+str(frameTimeOn)+" "+str(frameTimeOff))
-                    notesLost += 1
-                else:
-                    eventNote(obj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
-                    notesUnderLimitRecovered += 1
-        wLog("BarGraph - Animate cubes for track " +str(trackIndex)+" (notesCount) ("+str(len(track.notes))+"), notes recovered "+str(notesUnderLimitRecovered)+", notes lost "+str(notesLost))
+
+        for currentIndex, note in enumerate(track.notes):
+            # Find the previous note with the same note number
+            previousNote = None
+            for prevIndex in range(currentIndex - 1, -1, -1):
+                if track.notes[prevIndex].noteNumber == note.noteNumber:
+                    previousNote = track.notes[prevIndex]
+                    break
+
+            # Find the next note with the same note number
+            nextNote = None
+            for nextIndex in range(currentIndex + 1, len(track.notes)):
+                if track.notes[nextIndex].noteNumber == note.noteNumber:
+                    nextNote = track.notes[nextIndex]
+                    break
+
+            # Construct the cube name and animate
+            cubeName = "Cube-" + str(trackIndex) + "-" + str(note.noteNumber)
+            noteObj = bDat.objects[cubeName]
+            noteAnimate(noteObj, typeAnim, note, previousNote, nextNote)
+
+        wLog("BarGraph - Animate cubes for track " +str(trackIndex)+" (notesCount) ("+str(len(track.notes))+")")
 
 """
 End of BG visualisation
@@ -1163,86 +1321,174 @@ Blender visualisation with barrel organ
     X for note height
     Y for note length
 
-    Size of Grid
-    X => 88 cells for notes + 87 cells for intervals
-    Y => know the minimum resolution, if we needed to have double croches
-
-    Subdivision of note (french vs english)
-    Ronde : Whole note
-    Blanche : Half note
-    Noire : Quarter note
-    Croche : Eighth note
-    Double croche : Sixteenth note
-    Triple croche : Thirty-second note
-    Quadruple croche : Sixty-fourth note
-
-    ppqn means ticks per Quarter note
-    ticks_per_second = ppqn * tempo / 60
-
 """
-def createStripNotes(masterCollection, channelMask, length, typeAnim):
+def createStripNotes(masterCollection, trackMask, typeAnim):
 
     wLog("Create a Strip Notes Animation type="+typeAnim)
 
-    listOfSelectedChannel = parseRange(channelMask)
-    wLog("Channel filter "+channelMask+" "+str(listOfSelectedChannel))
+    listOfSelectedTrack = parseRange(trackMask)
 
-    # Create model Cubes, one per track
-    stripModelCube = []
-    for track in tracks:
-        obj = addCube(hiddenCollection, "StripNotesModelCube-T"+str(track.index), matCubeBlack, False, (track.index, 0, -5), (1,1,1))
-        setMaterialWithObjectLink(obj, "Light", color=trackColors[track.index]) # dispatched colors by track
-        stripModelCube.append(obj)
+    stripModelCube = addCube(hiddenCollection, "StripNotesModelCube", matGlobalCustom, False, (0, 0, -5), (1,1,1))
+    stripCollect = create_collection("StripNotes", masterCollection)
 
-    for numChannel, channel in channels.items():
-        if numChannel not in listOfSelectedChannel:
+    # Evaluate the real count of track processed
+    # For all tracks processed : 
+    # - minNote played
+    # - maxNote played
+    # - length in sec
+    trackProcessed = 0
+    noteMin = 1000
+    noteMax = 0
+    length = 0
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
             continue
-        offSetX = numChannel * 70
-        noteRange = (channel.minNote, channel.maxNote)
-        notecount = (noteRange[1]-noteRange[0]) + 1
-        noteMiddle = noteRange[0] + math.ceil(notecount / 2)
-        marginExtX = 3
-        marginExtY = 0 #3
-        cellSizeX = 1 # size X for each note in centimeters
-        intervalX = cellSizeX / 5
-        cellSizeY = 1 # size for each second in centimeters
-        intervalY = cellSizeY / 5
-        planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + ((notecount -1) * intervalX)
-        length = math.ceil(length) # in second
-        planSizeY = (length + (marginExtY *2)) * (cellSizeY + intervalY)
+        trackProcessed += 1
+        noteMin = min(noteMin, track.minNote)
+        noteMax = max(noteMax, track.maxNote)
+        length = max(length, track.notes[-1].timeOff)
+
+    notecount = (noteMax - noteMin) + 1
+    noteMiddle = noteMin + math.ceil(notecount / 2)
+
+    marginExtX = 0 # in ?
+    marginExtY = 0 # in sec
+    cellSizeX = 1 # size X for each note in centimeters
+    cellSizeY = 4 # size for each second in centimeters
+    intervalX = cellSizeX / 10
+    intervalTracks = (cellSizeX + intervalX) * (trackProcessed - 1)
+    planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + (notecount * intervalTracks)
+    planSizeY = (length + (marginExtY *2)) * cellSizeY
+
+    # Parse tracks
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+
+        offSetX = (trackIndex * (cellSizeX + intervalX))
+        intervalY = 0 # have something else to 0 create artefact in Y depending on how many note
         
         # Create collections
-        stripCollect = create_collection("Strip-Ch"+str(numChannel), masterCollection)
-        notesCollection = create_collection("Notes-Ch"+str(numChannel), stripCollect)
+        notesCollection = create_collection("Notes-Track-"+str(trackIndex), stripCollect)
 
         sizeX = cellSizeX
-        for noteIndex, note in enumerate(channel.notes):
-            posX = ((note.noteNumber - noteMiddle) * (cellSizeX + intervalX)) + offSetX
+        colorTrack = (trackIndex + 1) / (len(tracks) + 1) # color for track
+        colorTrack = (int(colorTrack * 255) ^ 0xAA) /255 # XOR operation to get a different color
+
+        for noteIndex, note in enumerate(track.notes):
+            posX = ((note.noteNumber - noteMiddle) * (cellSizeX + intervalTracks)) + offSetX + (sizeX / 2)
             sizeY = round(((note.timeOff - note.timeOn) * cellSizeY),2)
             posY = ((marginExtY + note.timeOn) * (cellSizeY + intervalY)) + (sizeY / 2)
-            nameOfNotePlayed = "Note-"+str(numChannel)+"-"+str(noteIndex)
+            nameOfNotePlayed = "Note-"+str(trackIndex)+"-"+str(noteIndex)
 
             # Duplicate the existing note
-            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube[note.track], nameOfNotePlayed)
+            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube, nameOfNotePlayed)
             noteObj.location = (posX, posY, 0) # Set instance position
             noteObj.scale = (sizeX, sizeY, 1) # Set instance scale
-            setMaterialWithObjectLink(noteObj, typeAnim, color=trackColors[note.track]) # dispatched colors by track
+            noteObj["baseColor"] = colorTrack
+
+            # Find the previous note with the same note number
+            previousNote = None
+            for prevIndex in range(noteIndex - 1, -1, -1):
+                if track.notes[prevIndex].noteNumber == note.noteNumber:
+                    previousNote = track.notes[prevIndex]
+                    break
+
+            # Find the next note with the same note number
+            nextNote = None
+            for nextIndex in range(noteIndex + 1, len(track.notes)):
+                if track.notes[nextIndex].noteNumber == note.noteNumber:
+                    nextNote = track.notes[nextIndex]
+                    break
 
             # Animate note
             # Be aware to animate duplicate only, never the model one
-            frameTimeOn = note.timeOn * fps
-            frameTimeOff = note.timeOff * fps
-            eventNote(noteObj, typeAnim, frameTimeOn, frameTimeOff, note.velocity)
+            # Pass the current note, previous note, and next note to the function
+            noteAnimate(noteObj, typeAnim, note, previousNote, nextNote)
+           
             
-        if notecount % 2 == 0:
-            posX = (-cellSizeX / 2) + offSetX
-        else:
-            posX = (-cellSizeX) + offSetX
-        obj = createRectangularPlane(stripCollect, "NotesStrip-"+str(numChannel), planSizeX, planSizeY, (posX, planSizeY / 2, -stripModelCube[0].scale.z / 2))
+        wLog("Notes Strip track "+str(trackIndex)+" - create & animate "+ str(noteIndex + 1))
 
-        wLog("Notes Strip channel "+str(numChannel)+" - create & animate "+ str(noteIndex + 1))
+    obj = createRectangularPlane(stripCollect, "NotesStripPlane", matGlobalCustom, planSizeX, planSizeY, (0, planSizeY / 2, (-stripModelCube.scale.z / 2)*1.05))
+    obj["baseColor"] = 0.01 # White
 
     return obj
+
+"""
+Blender visualisation with waterfall on note strip
+"""
+def createWaterFall(masterCollection, trackMask, typeAnim):
+    
+    wLog("Create a waterfall Notes Animation type")
+
+    createStripNotes(masterCollection, trackMask, typeAnim)
+
+    listOfSelectedTrack = parseRange(trackMask)
+
+    # Initialize a list to store all notes from the selected tracks along with their track index
+    selectedNotes = []
+
+    # Iterate through all tracks and collect notes from the selected tracks
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex in listOfSelectedTrack:  # Check if the current track is selected
+            # Add each note as a tuple (trackIndex, note) to the list
+            selectedNotes.extend((trackIndex, note) for note in track.notes)
+
+    # Find the tuple with the note that has the smallest timeOn value
+    noteMinTimeOn = min(selectedNotes, key=lambda x: x[1].timeOn)
+    # Find the tuple with the note that has the largest timeOff value
+    noteMaxTimeOff = max(selectedNotes, key=lambda x: x[1].timeOff)
+
+    # Get first and last note object
+    noteIndex = tracks[noteMinTimeOn[0]].notes.index(noteMinTimeOn[1])
+    FirstNotePlayed = "Note-"+str(noteMinTimeOn[0])+"-"+str(noteIndex)
+    noteIndex = tracks[noteMaxTimeOff[0]].notes.index(noteMaxTimeOff[1])
+    LastNotePlayed = "Note-"+str(noteMaxTimeOff[0])+"-"+str(noteIndex)
+    firstNote = bDat.objects[FirstNotePlayed]
+    lastNote = bDat.objects[LastNotePlayed]
+
+    # Create a new camera
+    cameraData = bpy.data.cameras.new(name="Camera")
+    cameraObj = bpy.data.objects.new("Camera", cameraData)
+    masterCollection.objects.link(cameraObj)
+
+    # orthographic mode
+    cameraData.type = 'ORTHO'
+
+    objStripePlan = bDat.objects["NotesStripPlane"]
+    sizeX = objStripePlan.scale.x
+
+    # othographic scale (Field of View)
+    cameraData.ortho_scale = sizeX # 90
+
+    offSetYCamera = sizeX*(9/16)/2
+    orthoFOV = 38.6
+
+    CameraLocationZ = (sizeX/2) / (math.tan(orthoFOV/2))
+    
+    # Set the initial position of the camera
+    cameraObj.location = (0, offSetYCamera, CameraLocationZ)  # X, Y, Z
+    cameraObj.rotation_euler = (0, 0, 0)  # Orientation
+    cameraObj.data.shift_y = -0.01
+
+    # Add a keyframe for the starting Y position
+    cameraObj.location.y = offSetYCamera + firstNote.location.y - (firstNote.scale.y/2)
+    cameraObj.keyframe_insert(data_path="location", index=1, frame=noteMinTimeOn[1].timeOn*fps)
+
+    # Add a keyframe for the starting Y position
+    cameraObj.location.y = offSetYCamera + lastNote.location.y + (lastNote.scale.y/2)
+    cameraObj.keyframe_insert(data_path="location", index=1, frame=noteMaxTimeOff[1].timeOff*fps)
+
+    # Set the active camera for the scene
+    bCon.scene.camera = cameraObj
+
+    # Rendre l'animation linéaire
+    action = cameraObj.animation_data.action  # Récupérer l'action d'animation de l'objet
+    fcurve = action.fcurves.find(data_path="location", index=1)  # F-Curve pour l'axe Y
+
+    if fcurve:
+        for keyframe in fcurve.keyframe_points:
+            keyframe.interpolation = 'LINEAR'  # Définir l'interpolation sur 'LINEAR'
 
 """
 Main
@@ -1271,9 +1517,14 @@ path = "W:\\MIDI\\Samples"
 # filename = "MIDI Sample"
 # filename = "MIDI Sample C3toC4"
 # filename = "pianoTest"
-filename = "T1_CDL"
+filename = "sampleFountain"
+# filename = "T1_CDL"
+# filename = "RushE"
+# filename = "MIDI-Testing"
 # filename = "T1"
 # filename = "49f692270904997536e8f5c1070ac880" # Multi channel classical
+# filename = "PianoClassique3Tracks978Mesures"
+# filename = "ManyTracks"
 # filename = "067dffc37b3770b4f1c246cc7023b64d" # One channel Biggest 35188 notes
 # filename = "a4727cd831e7aff3df843a3da83e8968" # Next test
 # filename = "4cd07d39c89de0f2a3c7b2920a0e0010"
@@ -1332,67 +1583,21 @@ Create (tracks number) lines of (min/max notes) Cubes
 # Determine min and max global for centering objects
 noteMaxAllTracks = 0
 noteMinAllTracks = 1000
+firstNoteTimeOn = 1000
+lastNoteTimeOff = 0
 for track in tracks:
     noteMinAllTracks = min( noteMinAllTracks, track.minNote)
     noteMaxAllTracks = max( noteMaxAllTracks, track.maxNote)
+    firstNoteTimeOn = min(firstNoteTimeOn, track.notes[0].timeOn)
+    lastNoteTimeOff = max(lastNoteTimeOff, track.notes[-1].timeOff)
+
 noteMidRange = noteMinAllTracks + (noteMaxAllTracks - noteMinAllTracks) / 2
 wLog("note min =  " + str(noteMinAllTracks))
 wLog("note max =  " + str(noteMaxAllTracks))
 wLog("note mid range =  " + str(noteMidRange))
+wLog("Start on first note timeOn in sec =  " + str(firstNoteTimeOn))
+wLog("End on Last note timeOff in sec =  " + str(lastNoteTimeOff))
 
-from typing import Dict
-
-# Create MIDI channels dynamically based on usage
-channels: Dict[int, MIDIChannel] = {}
-channelMaxUsed = 0
-channelMinUsed = 1000
-maxTimeOff = 0
-
-for track in tracks:
-    for note in track.notes:
-        maxTimeOff = max(maxTimeOff, note.timeOff)
-        channelMinUsed = min(channelMinUsed, note.channel)
-        channelMaxUsed = max(channelMaxUsed, note.channel)
-        
-        # If the channel doesn't exist yet, create it
-        if note.channel not in channels:
-            channels[note.channel] = MIDIChannel(index=note.channel)
-       
-        # Update channel with note data
-        channel = channels[note.channel]
-        channel.notes.append(MIDIChannelNote(track.index, note.channel, note.noteNumber, note.timeOn, note.timeOff, note.velocity))
-        channel.minNote = min(channel.minNote, note.noteNumber)
-        channel.maxNote = max(channel.maxNote, note.noteNumber)
-
-        # Update noteUsed
-        if note.noteNumber not in channel.notesUsed:
-            channel.notesUsed.append(note.noteNumber)
-
-        # Update trackUsed and count notes per track
-        track_found = next((t for t in channel.trackUsed if t.trackIndex == track.index), None)
-        if not track_found:
-            # Add track information if it doesn't exist yet
-            track_found = channel.trackUsed.append(MIDITrackUsed(track.index, track.name, 1))
-        else:
-            # Increment note count for this track
-            track_found.noteCount += 1
-
-    wLog("create channel from track "+str(track.index)+" "+track.name)
-
-wLog("Number of channels created = " + str(len(channels)))
-wLog("Detailled channel contents:")
-wLog("---------------------------")
-for numChannel, channel in channels.items():
-    wLog("- Channel " + str(channel.index))
-    wLog("  - Notes Used  = " + str(channel.notesUsed))
-    wLog("  - Notes Count = " + str(len(channel.notes)))
-    wLog("  - Track dispatch")
-    for track in channel.trackUsed:
-        wLog("    - Tracks Index = " + str(track.trackIndex))
-        wLog("    - Tracks Name  = " + track.name)
-        wLog("    - Notes Count  = " + str(track.noteCount))
-
-wLog("length of MIDI file in seconds = " + str(maxTimeOff))
 
 """
 Blender part
@@ -1404,23 +1609,20 @@ masterCollection = create_collection("MTB", bScn.collection)
 hiddenCollection = create_collection("Hidden", masterCollection)
 hiddenCollection.hide_viewport = True
 
-# Some materials
-matCubeBlack = bDat.materials.new(name="matCube")
-matCubeBlack.use_nodes = True
-principled = PrincipledBSDFWrapper(matCubeBlack, is_readonly=False)
-principled.base_color = (0.1, 0.1, 0.1)
+matGlobalCustom = CreateMatGlobalCustom()
 
-matCubeWhite = bDat.materials.new(name="matCube")
-matCubeWhite.use_nodes = True
-principled = PrincipledBSDFWrapper(matCubeWhite, is_readonly=False)
-principled.base_color = (0.9, 0.9, 0.9)
-
-createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Scale")
+# createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Scale")
 # createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Light")
-# createStripNotes(masterCollection, "3,9,11", maxTimeOff, typeAnim="Scale")
-# createStripNotes(masterCollection, "0-15", maxTimeOff, typeAnim="Light")
+# createBlenderBGAnimation(masterCollection, "0-30", typeAnim="Light,Scale")
+# createStripNotes(masterCollection, "3,9,11", typeAnim="Scale")
+# createStripNotes(masterCollection, "0-15", typeAnim="Light")
+# createWaterFall(masterCollection, "0-15", typeAnim="Scale")
+createWaterFall(masterCollection, "0-15", typeAnim="Light")
+# createWaterFall(masterCollection, "0-15", typeAnim="Scale,Light")
 
-bScn.frame_end = math.ceil(maxTimeOff + 5)*fps
+bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
+createCompositorNodes()
+viewportShadingRendered()
 
 # Close log file
 wLog("Script Finished: %.2f sec" % (time.time() - timeStart))
