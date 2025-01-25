@@ -710,19 +710,6 @@ def wLog(toLog):
     print(toLog)
     flog.write(toLog+"\n")
 
-# write to screen and log
-def readMTBTrack(id):
-    """ Search all infos about a channel in mtb_data
-    IN
-        id         int     Identifier of channel
-    OUT
-        jsonTrack
-    """
-    for chan in jsonData:
-        if chan['Channel'] == id:
-            return chan
-    return None
-
 # Research about a collection
 def find_collection(context, item):
     collections = item.users_collection
