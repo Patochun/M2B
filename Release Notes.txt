@@ -1,7 +1,13 @@
 
 Release notes :
 
-MTB V1
+MTB V2
+
+- Add midi channel concept
+    - In any track there is one or multiple midi channel associated with notes
+    - Mean any note are played into a specific midi channel
+- Testing for midi format 0, 1 et 2
+    - Secure ASCII decoding for values above 128 (use latin-1 instead)MTB V1
 
 - Inform if fps is good or not (>=50 is good)
 - Reuse of MIDI parser

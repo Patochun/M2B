@@ -8,7 +8,7 @@ Author   : Patochun (Patrick M)
 Mail     : ptkmgr@gmail.com
 YT       : https://www.youtube.com/channel/UCCNXecgdUbUChEyvW3gFWvw
 Create   : 2024-11-11
-Version  : 1.0
+Version  : 2.0
 Compatibility : Blender 4.0 and above
 
 Licence used : GNU GPL v3
@@ -30,15 +30,15 @@ bScn = bCon.scene
 bOps = bpy.ops
 
 """
-MIDI module imported from https://github.com/JacquesLucke/animation_nodes
-I was the initiator and participated in the implementation of the MIDI module in Animation Nodes
-The final code was written by OMAR Emara and slightly modified here according to my needs
-Additions:
-    added noteMin & noteMax in track object 
-    added notesUsed in track object
-    added track only if it contains notes in tracks
-    added trackIndexUsed vs trackIndex
-Directly integrated here to avoid having to manage additional python modules
+Module MIDI for importation from https://github.com/JacquesLucke/animation_nodes
+Code written by OMAR Emara and modified slightly accordingly to my needs
+Add :
+    add noteMin & noteMax inside track object
+    add notesUsed inside track object
+    add track only if exist notes inside into tracks
+    add trackIndexUsed vs trackIndex
+
+Integrated directly here for simplification
 """
 
 from dataclasses import dataclass, field
@@ -84,6 +84,14 @@ class MIDINote:
         return MIDINote(self.channel, self.noteNumber, self.timeOn, self.timeOff, self.velocity)
 
 from typing import List
+
+@dataclass
+class MIDIChannel:
+    index: int = 0
+    minNote: int = 1000
+    maxNote: int = 0
+    notes: List[MIDINote] = field(default_factory = list)
+    notesUsed: List[int] = field(default_factory = list)
 
 @dataclass
 class MIDITrack:
@@ -230,7 +238,7 @@ class TextEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        text = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        text = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, text)
 
 @dataclass
@@ -240,7 +248,7 @@ class CopyrightEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        copyright = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        copyright = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, copyright)
 
 @dataclass
@@ -250,7 +258,7 @@ class TrackNameEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, name)
 
 @dataclass
@@ -260,7 +268,7 @@ class InstrumentNameEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, name)
 
 @dataclass
@@ -270,7 +278,7 @@ class LyricEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        lyric = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        lyric = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, lyric)
 
 @dataclass
@@ -280,7 +288,7 @@ class MarkerEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        marker = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        marker = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, marker)
 
 @dataclass
@@ -290,7 +298,7 @@ class CuePointEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        cuePoint = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        cuePoint = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, cuePoint)
 
 @dataclass
@@ -300,7 +308,7 @@ class ProgramNameEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, name)
 
 @dataclass
@@ -310,7 +318,7 @@ class DeviceNameEvent:
 
     @classmethod
     def fromMemoryMap(cls, deltaTime, length, memoryMap):
-        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("ascii")
+        name = struct.unpack(f"{length}s", memoryMap.read(length))[0].decode("latin-1")
         return cls(deltaTime, name)
 
 @dataclass
@@ -530,7 +538,7 @@ def parseEvents(memoryMap):
     return events
 
 def parseTrackHeader(memoryMap):
-    identifier = memoryMap.read(4).decode('ascii')
+    identifier = memoryMap.read(4).decode('latin-1')
     chunkLength = struct.unpack(">I", memoryMap.read(4))[0]
     return chunkLength
 
@@ -545,7 +553,7 @@ class MidiTrack:
         return cls(events)
 
 def parseHeader(memoryMap):
-    identifier = memoryMap.read(4).decode('ascii')
+    identifier = memoryMap.read(4).decode('latin-1')
     chunkLength = struct.unpack(">I", memoryMap.read(4))[0]
     midiFormat = struct.unpack(">H", memoryMap.read(2))[0]
     tracksCount = struct.unpack(">H", memoryMap.read(2))[0]
@@ -700,6 +708,7 @@ End of Module MIDI for importation
 """
 Start of original code
 """
+
 import os
 import json
 import time
@@ -709,6 +718,19 @@ import math
 def wLog(toLog):
     print(toLog)
     flog.write(toLog+"\n")
+
+# write to screen and log
+def readMTBTrack(id):
+    """ Search all infos about a channel in mtb_data
+    IN
+        id         int     Identifier of channel
+    OUT
+        jsonTrack
+    """
+    for chan in jsonData:
+        if chan['Channel'] == id:
+            return chan
+    return None
 
 # Research about a collection
 def find_collection(context, item):
@@ -778,6 +800,14 @@ def eventNote(obj, frameTimeOn, frameTimeOff, velocity):
     obj.keyframe_insert(data_path="scale", frame=frameTimeOff)  # downscaling
     obj.keyframe_insert(data_path="location", frame=frameTimeOff)
 
+# Research about a collection
+def addNoteInMidiChannel(note):
+    print(note.channel)
+
+
+
+
+
 """
 Main
 """
@@ -831,6 +861,34 @@ if os.path.exists(pathAudioFile):
 else:
     wLog("Audio file mp3 not exist")
 
+# If JSON parameter file with the same name of MIDI file exist then use it for configuration
+# Else create it with BG type for all of channels
+jsonData = []  # List of channels
+if os.path.exists(pathJsonFile):
+    jsonInit = False
+    # Load json file
+    with open(pathJsonFile, 'r') as f:
+        jsonData = json.load(f)
+        wLog("JSON configuration file is loaded")
+else:
+    jsonInit = True
+    wLog("JSON configuration file is created")
+
+# Create one vizualisation object per channel
+curtrack = 0
+for track in tracks:
+    if jsonInit:
+        jsonTrack = {}
+        jsonTrack["Channel"] = track.index
+        jsonTrack["Locked"] = "False"
+        jsonTrack["Name"] = track.name
+        jsonTrack["Type"] = "BG"
+        jsonTrack["Template"] = ""
+        jsonTrack["Animate"] = "True"
+        jsonData.append(jsonTrack)
+    else:
+        jsonTrack = readMTBTrack(curtrack)
+
 # Cube body
 matCube = bpy.data.materials.new(name="matCube")
 matCube.use_nodes = True
@@ -843,44 +901,60 @@ newCol = create_collection("MTB", bpy.context.scene.collection)
 Create (tracks number) lines of (min/max notes) Cubes
 """
 
-# Determine min and max global for centered objects
+# Determine min and max global for centering objects
 noteMaxAllTracks = 0
 noteMinAllTracks = 1000
 for track in tracks:
     for track in tracks:
         noteMinAllTracks = min( noteMinAllTracks, track.minNote)
         noteMaxAllTracks = max( noteMaxAllTracks, track.maxNote)
-
 noteMidRange = noteMinAllTracks + (noteMaxAllTracks - noteMinAllTracks) / 2
 wLog("note min =  " + str(noteMinAllTracks))
 wLog("note max =  " + str(noteMaxAllTracks))
 wLog("note mid range =  " + str(noteMidRange))
 
-# Create cubes
+# Create MIDI channel from all tracks
+channels: List[MIDIChannel] = [MIDIChannel() for _ in range(16)]
 for track in tracks:
-    for note in track.notesUsed:
-        cubeName = "Cube-"+str(track.index)+"-"+str(note)
+    for note in track.notes:
+        channels[note.channel].notes.append(MIDINote(note.channel,note.noteNumber, note.timeOn, note.timeOff, note.velocity))
+        channels[note.channel].minNote = min(channels[note.channel].minNote,note.noteNumber)
+        channels[note.channel].maxNote = max(channels[note.channel].maxNote,note.noteNumber)
+        channels[note.channel].index = note.channel
+        if note.noteNumber not in channels[note.channel].notesUsed:
+            channels[note.channel].notesUsed.append(note.noteNumber)
+    wLog("create channel from track "+str(track.index)+" "+track.name)
+
+# Create cubes from channel
+for channel in channels:
+    for note in channel.notesUsed:
+        cubeName = "Cube-"+str(channel.index)+"-"+str(note)
         offsetX = note - noteMidRange
-        offsetY = track.index - len(tracks) / 2
+        offsetY = channel.index - len(channels) / 2
         addCube(newCol, cubeName, offsetX, offsetY, 0, matCube)
-    wLog("create "+str(len(track.notesUsed))+" cubes for track (range noteMin-noteMax) "+track.name+" ("+str(track.minNote)+"-"+str(track.maxNote)+")")
+    wLog("create "+str(len(channel.notesUsed))+" cubes for channel (range noteMin-noteMax) "+str(channel.index)+" ("+str(channel.minNote)+"-"+str(channel.maxNote)+")")
 
 # Animate cubes accordingly to notes event
 maxTimeOff = 0
-for track in tracks:
-    for note in track.notes:
+for channel in channels:
+    for note in channel.notes:
         maxTimeOff = max(maxTimeOff,note.timeOff)
         # retrieve object by is name
-        cubeName = "Cube-"+str(track.index)+"-"+str(note.noteNumber)
+        cubeName = "Cube-"+str(channel.index)+"-"+str(note.noteNumber)
         obj = bpy.data.objects[cubeName]
         frameTimeOn = note.timeOn * fps
         frameTimeOff = note.timeOff * fps
         velocity = 8 * note.velocity
         eventNote(obj, frameTimeOn, frameTimeOff, velocity)
-    wLog("Animate cubes for track (NbNotes) "+track.name+" ("+str(len(track.notes))+")")
+    wLog("Animate cubes for channel (NbNotes) "+str(channel.index)+" ("+str(len(channel.notes))+")")
 
-wLog("length of MIDI file in seconds =  " + str(maxTimeOff))
+wLog("lenght of MIDI file in seconds =  " + str(maxTimeOff))
 bCon.scene.frame_end = math.ceil(maxTimeOff + 5)*fps
+
+# Save json file if initialising
+if jsonInit:
+    with open(pathJsonFile, 'w') as f:
+        f.write(json.dumps(jsonData, indent=4))
 
 # Close log file
 wLog("Script Finished: %.2f sec" % (time.time() - timeStart))
