@@ -1,6 +1,32 @@
 
 Release notes :
 
+MTB V8
+
+- If MIDIfile type is 0 then explode N channels from working track 0 to N tracks
+- Visualisation Foutain
+    - Calculate x,y,z velocity according to :
+        - position of emitter
+        - position of note target
+        - Delay to reach it
+    - Animate target octave/note
+        - Emission color according to sphere note from track
+- parseRangeFromTracks return selectd Tracks of course but now, also noteMin, noteMax, OctaveCount
+- New Visualization Fireworks V2 using Particles System
+- New visualisation Fountain
+    - Empirical formula for now
+- Debug : Improve addIsoSphere. Mandatory parameters
+- TODO
+    - visualisation Fountain
+        - What to do if mutitrack reach target at the same time
+        - Multicolor ?
+    - Add a notion of draft and rendering version
+    - Harmonize head of each function (comments)
+    - Visualisation next :
+        - https://www.youtube.com/watch?v=It9DOTaFA7Q&ab_channel=Polyfjord
+        - Dancer
+- FIX placing plans in BGAnimation
+
 MTB V7
 
 - Review for camelCase usage
