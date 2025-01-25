@@ -1,0 +1,13 @@
+
+Release notes :
+
+MTB V1
+
+- Inform if fps is good or not (>=50 is good)
+- Reuse of MIDI parser
+- Read MIDI datas
+- Remove tracks with no note to cleaning a little
+- Add BarGraph visualisation
+    - Create one line of cubes per track
+    - Create one cube per existing note
+    - Animates cubes size in Z axis with note events
