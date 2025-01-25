@@ -8,7 +8,7 @@ Author   : Patochun (Patrick M)
 Mail     : ptkmgr@gmail.com
 YT       : https://www.youtube.com/channel/UCCNXecgdUbUChEyvW3gFWvw
 Create   : 2024-11-11
-Version  : 6.0
+Version  : 7.0
 Compatibility : Blender 4.0 and above
 
 Licence used : GNU GPL v3
@@ -21,7 +21,6 @@ Usage : All parameters like midifile used and animation choices are hardcoded in
 """
 
 import bpy
-import bmesh
 from bpy_extras.node_shader_utils import PrincipledBSDFWrapper
 import sys
 
@@ -37,7 +36,7 @@ Code written by OMAR Emara and modified slightly accordingly to my needs
 Add :
     add noteMin & noteMax inside track object
     add notesUsed inside track object
-    add track only if exist notes inside into tracks
+    add track only if exist notes inside tracks
     add trackIndexUsed vs trackIndex
     
 Integrated directly here for simplification
@@ -657,7 +656,6 @@ class TrackState:
             self.noteOnTable[key].numberOfNotes += 1
         else:
             self.noteOnTable[key] = NoteOnRecord(self.timeInTicks, self.timeInSeconds, event.velocity / 127)
-            # self.noteOnTable[key] = NoteOnRecord(self.timeInSeconds, event.velocity / 127)
 
     def getCorrespondingNoteOnRecord(self, event):
         key = (event.channel, event.note)
@@ -722,16 +720,18 @@ End of Module MIDI for importation
 Start of original code
 """
 
-import os
-import time
-import math
+# Import necessary modules
+import os  # Provides functions for interacting with the operating system
+import time  # Provides time-related functions
+import math  # Provides mathematical functions
+import random  # Provides functions for generating random numbers
 
 # write to screen and log
 def wLog(toLog):
     print(toLog)
     flog.write(toLog+"\n")
 
-# Define unit system
+# Define blender unit system
 def setBlenderUnits(unitScale=0.01, lengthUnit="CENTIMETERS"):
     bScn.unit_settings.system = 'METRIC'
     bScn.unit_settings.system_rotation = 'DEGREES'
@@ -754,33 +754,39 @@ def find_collection(context, item):
         return collections[0]
     return context.scene.collection
 
-def collapseCollectionInOutliner(collectionName):
-    """
-    Collapses a collection in the outliner by name.
-    Args:
-        collection_name (str): The name of the collection to collapse.
-    """
-    # Iterate through all areas in the current screen to find the OUTLINER
-    for area in bCon.screen.areas:
-        if area.type == 'OUTLINER':
-            # Set the context override for the OUTLINER area
-            with bCon.temp_override(area=area):
-                # Loop through the outliner and attempt to find the collection
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        override = {
-                            'area': area,
-                            'region': region,
-                            'window': bpy.context.window,
-                            'screen': bpy.context.screen,
-                        }
-                        try:
-                            bOps.outliner.item_openclose(override, open=False)
-                        except RuntimeError as e:
-                            print(f"Failed to collapse collection '{collectionName}': {e}")
-            break
-    else:
-        print("No OUTLINER area found in the current context.")
+# Maximize aera view in all windows.
+# type = VIEW_3D
+# type = OUTLINER
+def GUI_maximizeAeraView(type):
+    for window in bCon.window_manager.windows:
+        screen = window.screen
+        for area in screen.areas:
+            if area.type == type:
+                with bCon.temp_override(window=window, area=area):
+                    bpy.ops.screen.screen_full_area()
+                break
+
+def toggle_collection_collapse(state):
+    area = next(a for a in bCon.screen.areas if a.type == "OUTLINER")
+    region = next(r for r in area.regions if r.type == "WINDOW")
+    with bCon.temp_override(area=area, region=region):
+        bOps.outliner.show_hierarchy("INVOKE_DEFAULT")
+        for i in range(state):
+            # Expand/Collapse all items
+            bOps.outliner.expanded_toggle()
+    area.tag_redraw()
+    # https://projects.blender.org/blender/blender/issues/125522
+    
+def collapseAllCollectionInOutliner():
+    for window in bCon.window_manager.windows:
+        screen = window.screen
+        for area in screen.areas:
+            if area.type == "OUTLINER":
+                with bCon.temp_override(window=window, area=area):
+                    bpy.ops.outliner.expanded_toggle()
+                break
+
+    wLog("No OUTLINER area found in the current context.")
        
 # Create collection
 def create_collection(collection_name, parent_collection):
@@ -849,15 +855,7 @@ def createCustomAttributes(obj):
         min=0.0,  # Minimum value
         max=1.0,  # Maximum value
         step=0.01,  # Step size for the slider
-        description="Color factor for base Color"
-    )
-
-    obj["emissionStrength"] = 0.0  # Emission strength as a float
-    obj.id_properties_ui("emissionStrength").update(
-        min=0.0,  # Minimum value
-        soft_min=0.0,  # Soft minimum for UI
-        soft_max=10.0,  # Soft maximum for UI
-        description="Strength of the emission"
+        description="Color factor for base Color (0 to 1)"
     )
 
     obj["emissionColor"] = 0.0  # Emission color as a float
@@ -866,6 +864,14 @@ def createCustomAttributes(obj):
         max=1.0,  # Maximum value
         step=0.01,  # Step size for the slider
         description="Color factor for the emission (0 to 1)"
+    )
+
+    obj["emissionStrength"] = 0.0  # Emission strength as a float
+    obj.id_properties_ui("emissionStrength").update(
+        min=0.0,  # Minimum value
+        soft_min=0.0,  # Soft minimum for UI
+        soft_max=50.0,  # Soft maximum for UI
+        description="Strength of the emission"
     )
     
     return
@@ -884,6 +890,21 @@ def createRectangularPlane(collection, name, material, width=1, height=1, locati
     collection.objects.link(plane)
     collect_to_unlink.objects.unlink(plane)
     return plane
+
+# Create iso Sphere
+def addIsoSphere(collection, name, material, location=(0,0,0), radius=1.0):
+    # Add an isosphere at the specified location
+    bOps.mesh.primitive_ico_sphere_add(radius, location=location)
+    sphere = bCon.active_object
+    sphere.name = name
+    sphere.location = location
+    sphere.data.materials.append(material)
+    createCustomAttributes(sphere)
+    # Move the isosphere to the specified collection
+    collect_to_unlink = find_collection(bCon, sphere)
+    collection.objects.link(sphere)
+    collect_to_unlink.objects.unlink(sphere)
+    return sphere
 
 # Create Rectangular Cube
 def addCube(collection, name, material, bevel=False, location=(0,0,0), scale=(1,1,1)):
@@ -921,7 +942,7 @@ def setMaterialWithObjectLink(obj, typeAnim, color):
     if "Light" in typeAnim:
         # Ensure material is independent of shared mesh
         # Create new material
-        matNew = bpy.data.materials.new(name="Material-" + obj.name)
+        matNew = bDat.materials.new(name="Material-" + obj.name)
         matNew.use_nodes = True
         # Set material with base color
         principled = matNew.node_tree.nodes.get("Principled BSDF")
@@ -996,6 +1017,7 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote):
 
     frameTimeOn = int(note.timeOn * fps)
     frameTimeOff = int(note.timeOff * fps)
+    frameLength = frameTimeOff - frameTimeOn
 
     # reevaluate note length if too short
     if (frameTimeOff - frameTimeOn) < 3:
@@ -1031,9 +1053,9 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote):
     types = typeAnim.split(',')
     for animation_type in types:
         match animation_type.strip():  # Remove extra spaces and match each animation type
-            case "Scale":
+            case "ZScale":
                 velocity = 8 * note.velocity
-                # set initial scale cube before acting (T1)
+                # set initial ZScale cube before acting (T1)
                 Obj.scale.z = 1
                 Obj.location.z = 0
                 Obj.keyframe_insert(data_path="scale", index=2, frame=frameT1)  # before upscaling
@@ -1054,23 +1076,60 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote):
                 Obj.keyframe_insert(data_path="scale", index=2, frame=frameT4)  # downscaling
                 Obj.keyframe_insert(data_path="location", index=2, frame=frameT4)
             case "Light":
-                brightness = note.velocity * 20 # 2 ** (velocity ** 10)
+                brightness = note.velocity * 10 # 2 ** (velocity ** 10)
+                # Constrain velocityBlueToRed based on note.velocity
+                minValue = 0.02
+                maxValue = 0.4
+                
+                # Push values away from the median towards the edges
+                if note.velocity < 0.5:
+                    adjustedVelocity = 2 * (note.velocity ** 2)
+                else:
+                    adjustedVelocity = 1 - 2 * ((1 - note.velocity) ** 2)
+                
+                velocityBlueToRed = minValue + (maxValue - minValue) * adjustedVelocity
                 # set initial lighing before note On (T1)
-                Obj["emissionColor"] = note.velocity
                 Obj["emissionStrength"] = 0.0
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT1)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
                 # Upscale lighting on timeOn (T2)
+                Obj["emissionColor"] = velocityBlueToRed
                 Obj["emissionStrength"] = brightness
                 Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT2)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
                 # Keep actual lighting before note Off (T3)
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT3)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT3)
                 # reset ligthing to initial state on timeOff (T4)
                 Obj["emissionStrength"] = 0.0
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT4)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
+            case "Spread":
+                posZ = note.velocity * 30
+                radius = min(frameLength / 2, 5)
+                # set initial spread before note On (T1)
+                Obj.location.z = posZ
+                Obj.scale = (0,0,0)
+                Obj["emissionStrength"] = 0
+                Obj.keyframe_insert(data_path="location", index=2, frame=frameT1)
+                Obj.keyframe_insert(data_path="scale", frame=frameT1)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
+                densityCloud = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densityCloud"].identifier
+                Obj.modifiers["SparklesCloud"][densityCloud] = note.velocity / 3
+                Obj.keyframe_insert(data_path="modifiers[\"SparklesCloud\"][\""+densityCloud+"\"]", frame=frameT1)
+                densitySeed = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
+                Obj.modifiers["SparklesCloud"][densitySeed] = random.randint(0, 1000)
+                Obj.keyframe_insert(data_path="modifiers[\"SparklesCloud\"][\""+densitySeed+"\"]", frame=frameT1)
+                # Spread on timeOn (T2)
+                Obj.scale = (radius,radius,radius)
+                Obj["emissionStrength"] = 20
+                Obj.keyframe_insert(data_path="scale", frame=frameT2)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
+                # reset spread on timeOff (T4)
+                Obj.scale = (0,0,0)
+                Obj["emissionStrength"] = 0
+                Obj.keyframe_insert(data_path="scale", frame=frameT4)
+                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
+                densitySeed = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
+                Obj.modifiers["SparklesCloud"][densitySeed] = random.randint(0, 1000)
+                Obj.keyframe_insert(data_path="modifiers[\"SparklesCloud\"][\""+densitySeed+"\"]", frame=frameT4)
             case _:
                 wLog("I don't now anything about "+typeAnim)
 
@@ -1101,12 +1160,12 @@ def parseRange(rangeStr):
 
 # Create a global material with custom object attributes for base color, emission color and emission strength
 def CreateMatGlobalCustom():
-    materialName = "GlobalCubeMaterial"
-    if materialName not in bpy.data.materials:
-        mat = bpy.data.materials.new(name=materialName)
+    materialName = "GlobalCustomMaterial"
+    if materialName not in bDat.materials:
+        mat = bDat.materials.new(name=materialName)
         mat.use_nodes = True
     else:
-        mat = bpy.data.materials[materialName]
+        mat = bDat.materials[materialName]
 
     # Configure the material nodes
     nodes = mat.node_tree.nodes
@@ -1127,21 +1186,19 @@ def CreateMatGlobalCustom():
 
     colorRampBase = nodes.new(type="ShaderNodeValToRGB")
     colorRampBase.location = (-200, 100)
-    colorRampBase.color_ramp.interpolation = 'LINEAR'  # Ensure linear interpolation
-    colorRampBase.color_ramp.elements.new(0.01)  # Add a stop at 0.20
-    colorRampBase.color_ramp.elements.new(0.02)  # Add a stop at 0.20
-    colorRampBase.color_ramp.elements.new(0.20)  # Add a stop at 0.20
+    colorRampBase.color_ramp.interpolation = 'CARDINAL'  # Ensure linear interpolation
+    colorRampBase.color_ramp.elements.new(0.01)  # Add a stop at 0.01
+    colorRampBase.color_ramp.elements.new(0.02)  # Add a stop at 0.02
     colorRampBase.color_ramp.elements.new(0.40)  # Add a stop at 0.40
     colorRampBase.color_ramp.elements.new(0.60)  # Add a stop at 0.60
     colorRampBase.color_ramp.elements.new(0.80)  # Add a stop at 0.80
     colorRampBase.color_ramp.elements[0].color = (0, 0, 0, 1)  # Black 0.0
     colorRampBase.color_ramp.elements[1].color = (1, 1, 1, 1)  # White 0.01
-    colorRampBase.color_ramp.elements[2].color = (1, 0, 0, 1)  # Red 0.02
-    colorRampBase.color_ramp.elements[3].color = (1, 1, 0, 1)  # Yellow 0.2
-    colorRampBase.color_ramp.elements[4].color = (0, 1, 0, 1)  # Green 0.4
-    colorRampBase.color_ramp.elements[5].color = (0, 1, 1, 1)  # Cyan 0.6
-    colorRampBase.color_ramp.elements[6].color = (0, 0, 1, 1)  # Blue 0.8
-    colorRampBase.color_ramp.elements[7].color = (1, 0, 1, 1)  # Purple 1.0
+    colorRampBase.color_ramp.elements[2].color = (0, 0, 1, 1)  # Blue 0.02
+    colorRampBase.color_ramp.elements[3].color = (1, 0, 0, 1)  # Red 0.4
+    colorRampBase.color_ramp.elements[4].color = (1, 1, 0, 1)  # Yellow 0.6
+    colorRampBase.color_ramp.elements[5].color = (0, 1, 0, 1)  # Green 0.8
+    colorRampBase.color_ramp.elements[6].color = (0, 1, 1, 1)  # Cyan 1.0
 
     attributeEmissionStrength = nodes.new(type="ShaderNodeAttribute")
     attributeEmissionStrength.location = (-400, -300)
@@ -1155,9 +1212,19 @@ def CreateMatGlobalCustom():
 
     colorRampEmission = nodes.new(type="ShaderNodeValToRGB")
     colorRampEmission.location = (-200, -100)
-    colorRampEmission.color_ramp.interpolation = 'LINEAR'  # Ensure linear interpolation
-    colorRampEmission.color_ramp.elements[0].color = (0, 0, 1, 1)  # Blue
-    colorRampEmission.color_ramp.elements[1].color = (1, 0, 0, 1)  # Red
+    colorRampEmission.color_ramp.interpolation = 'CARDINAL'  # Ensure linear interpolation
+    colorRampEmission.color_ramp.elements.new(0.01)  # Add a stop at 0.01
+    colorRampEmission.color_ramp.elements.new(0.02)  # Add a stop at 0.02
+    colorRampEmission.color_ramp.elements.new(0.40)  # Add a stop at 0.40
+    colorRampEmission.color_ramp.elements.new(0.60)  # Add a stop at 0.60
+    colorRampEmission.color_ramp.elements.new(0.80)  # Add a stop at 0.80
+    colorRampEmission.color_ramp.elements[0].color = (0, 0, 0, 1)  # Black 0.0
+    colorRampEmission.color_ramp.elements[1].color = (1, 1, 1, 1)  # White 0.01
+    colorRampEmission.color_ramp.elements[2].color = (0, 0, 1, 1)  # Blue 0.02
+    colorRampEmission.color_ramp.elements[3].color = (1, 0, 0, 1)  # Red 0.4
+    colorRampEmission.color_ramp.elements[4].color = (1, 1, 0, 1)  # Yellow 0.6
+    colorRampEmission.color_ramp.elements[5].color = (0, 1, 0, 1)  # Green 0.8
+    colorRampEmission.color_ramp.elements[6].color = (0, 1, 1, 1)  # Cyan 1.0
 
     # Connect the nodes
     links.new(attributeBaseColor.outputs["Fac"], colorRampBase.inputs["Fac"])  # Emission color
@@ -1171,8 +1238,8 @@ def CreateMatGlobalCustom():
 
 def createCompositorNodes():
     # Enable the compositor
-    bCon.scene.use_nodes = True
-    nodeTree = bCon.scene.node_tree
+    bScn.use_nodes = True
+    nodeTree = bScn.node_tree
 
     # Remove existing nodes
     for node in nodeTree.nodes:
@@ -1187,10 +1254,10 @@ def createCompositorNodes():
 
     # Configure the Glare node
     glareNode.glare_type = 'BLOOM'
-    glareNode.quality = 'HIGH'
+    glareNode.quality = 'MEDIUM'
     glareNode.mix = 0.0
-    glareNode.threshold = 1.6
-    glareNode.size = 6
+    glareNode.threshold = 5
+    glareNode.size = 4
 
     compositeNode = nodeTree.nodes.new(type='CompositorNodeComposite')
     compositeNode.location = (600, 0)
@@ -1211,12 +1278,94 @@ def viewportShadingRendered():
                     space.shading.type = 'RENDERED'
 
     # Enable compositor (this ensures nodes are active)
-    bpy.context.scene.use_nodes = True
+    bScn.use_nodes = True
 
     # Ensure compositor updates are enabled
-    bpy.context.scene.render.use_compositing = True
-    bpy.context.scene.render.use_sequencer = False  # Disable sequencer if not needed
+    bScn.render.use_compositing = True
+    bScn.render.use_sequencer = False  # Disable sequencer if not needed
     
+    return
+
+
+def createSparklesCloudGN(nameGN, obj, sparklesMaterial):
+    # Ajouter un modificateur Geometry Nodes
+    mod = obj.modifiers.new(name=nameGN, type='NODES')
+    
+    # Créer un nouveau groupe de nœuds Geometry Nodes
+    nodeGroup = bDat.node_groups.new(name=nameGN, type="GeometryNodeTree")
+
+    # Associer le groupe au modificateur
+    mod.node_group = nodeGroup
+
+    # Définir les entrées et sorties du groupe
+    nodeGroup.interface.new_socket(socket_type="NodeSocketGeometry", name="Geometry", in_out="INPUT")
+    socketRadiusSparklesCloud = nodeGroup.interface.new_socket(socket_type="NodeSocketFloat", name="radiusSparklesCloud", in_out="INPUT", description="Radius of the sparkles cloud")
+    socketRadiusSparkles = nodeGroup.interface.new_socket(socket_type="NodeSocketFloat", name="radiusSparkles", in_out="INPUT", description="Radius of the sparkles")
+    socketDensityCloud = nodeGroup.interface.new_socket(socket_type="NodeSocketFloat", name="densityCloud", in_out="INPUT", description="Density of the sparkles cloud")
+    socketDensitySeed = nodeGroup.interface.new_socket(socket_type="NodeSocketInt", name="densitySeed", in_out="INPUT", description="Seed of the sparkles cloud")
+    nodeGroup.interface.new_socket(socket_type="NodeSocketMaterial", name="sparkleMaterial", in_out="INPUT")
+    nodeGroup.interface.new_socket(socket_type="NodeSocketGeometry", name="Geometry", in_out="OUTPUT")
+
+    socketRadiusSparklesCloud.default_value = 1.0
+    socketRadiusSparklesCloud.min_value = 0.0
+    socketRadiusSparklesCloud.max_value = 1.0
+    
+    socketRadiusSparkles.default_value = 0.02
+    socketRadiusSparkles.min_value = 0.0
+    socketRadiusSparkles.max_value = 0.05
+    
+    socketDensityCloud.default_value = 10
+    socketDensityCloud.min_value = 0
+    socketDensityCloud.max_value = 10
+        
+    socketDensitySeed.default_value = 0
+    socketDensitySeed.min_value = 0
+    socketDensitySeed.max_value = 100000
+    
+    # Ajouter les nœuds nécessaires
+    nodeInput = nodeGroup.nodes.new("NodeGroupInput")
+    nodeInput.location = (-500, 0)
+
+    nodeOutput = nodeGroup.nodes.new("NodeGroupOutput")
+    nodeOutput.location = (800, 0)
+
+    icoSphereCloud = nodeGroup.nodes.new("GeometryNodeMeshIcoSphere")
+    icoSphereCloud.location = (-300, 200)
+    icoSphereCloud.inputs["Subdivisions"].default_value = 3
+
+    multiplyNode = nodeGroup.nodes.new("ShaderNodeMath")
+    multiplyNode.location = (-300, -100)
+    multiplyNode.operation = 'MULTIPLY'
+    multiplyNode.inputs[1].default_value = 10.0
+
+    distributePoints = nodeGroup.nodes.new("GeometryNodeDistributePointsOnFaces")
+    distributePoints.location = (0, 200)
+
+    icoSphereSparkles = nodeGroup.nodes.new("GeometryNodeMeshIcoSphere")
+    icoSphereSparkles.location = (0, -200)
+    icoSphereSparkles.inputs["Subdivisions"].default_value = 1
+
+    instanceOnPoints = nodeGroup.nodes.new("GeometryNodeInstanceOnPoints")
+    instanceOnPoints.location = (300, 200)
+
+    setMaterial = nodeGroup.nodes.new("GeometryNodeSetMaterial")
+    setMaterial.location = (600, 200)
+    
+    # Connecter les nœuds
+    links = nodeGroup.links
+    links.new(icoSphereCloud.outputs["Mesh"], distributePoints.inputs["Mesh"])
+    links.new(distributePoints.outputs["Points"], instanceOnPoints.inputs["Points"])
+    links.new(multiplyNode.outputs["Value"], distributePoints.inputs["Density"])
+    links.new(instanceOnPoints.outputs["Instances"], setMaterial.inputs["Geometry"])
+    links.new(icoSphereSparkles.outputs["Mesh"], instanceOnPoints.inputs["Instance"])
+    links.new(nodeInput.outputs["radiusSparklesCloud"], icoSphereCloud.inputs["Radius"])
+    links.new(nodeInput.outputs["radiusSparkles"], icoSphereSparkles.inputs["Radius"])
+    links.new(nodeInput.outputs["densityCloud"], multiplyNode.inputs[0])
+    links.new(nodeInput.outputs["densitySeed"], distributePoints.inputs["Seed"])
+    links.new(nodeInput.outputs["sparkleMaterial"], setMaterial.inputs["Material"])
+    links.new(setMaterial.outputs["Geometry"], nodeOutput.inputs["Geometry"])
+
+    wLog(f"Geometry Nodes '{nameGN}' created successfully!")
     return
 
 """
@@ -1236,7 +1385,14 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
     BGModelCube = addCube(hiddenCollection, "BGModelCube", matGlobalCustom, False, (0, 0, -5), (1,1,1))
 
     # Create cubes from track
-    trackCenter = (len(tracks)-1) / 2
+    # Parse track to create BG
+    numberOfRenderedTracks = 0
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+        numberOfRenderedTracks += 1
+
+    trackCenter = numberOfRenderedTracks // 2
     cubeSpace = BGModelCube.scale.x * 1.2 # mean x size of cube + 20 %
 
     trackCount = 0
@@ -1250,7 +1406,7 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
         noteMin = min(noteMin, track.minNote)
         noteMax = max(noteMax, track.maxNote)
         # create collection
-        BGTrackName = "BG-"+str(trackIndex)
+        BGTrackName = "BG-"+str(trackIndex)+"-"+track.name
         BGTrackCollect = create_collection(BGTrackName, BGCollect)
         trackCount += 1
 
@@ -1269,10 +1425,22 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
                 
         wLog("BarGraph - create "+str(len(track.notesUsed))+" cubes for track "+ str(trackIndex) +" (range noteMin-noteMax) ("+str(track.minNote)+"-"+str(track.maxNote)+")")
 
-    planSizeX = (noteMax-noteMin+1) * cubeSpace
-    planSizeY = trackCount * cubeSpace
-    obj = createRectangularPlane(BGCollect, "BGPlane", matGlobalCustom, planSizeX, planSizeY, (0, 0, (-BGModelCube.scale.z / 2)*1.05))
-    obj["baseColor"] = 0.01 # White
+    # Create a plane by octave to have a visualisation for them
+    # minnote and maxnote are usefull to know the range of octave
+    minOctave = noteMin // 12
+    maxOctave = noteMax // 12
+    
+    planPosXOffset = (((noteMidRange // 12) - 6) * cubeSpace) - (cubeSpace / 2)
+    for octave in range(minOctave, maxOctave + 1):
+        planSizeX = 12 * cubeSpace
+        planSizeY = trackCount * cubeSpace
+        planPosX = (octave - (noteMidRange // 12)) * 12 * cubeSpace
+        planPosX += planPosXOffset
+        obj = createRectangularPlane(BGCollect, "BGPlane-"+str(octave), matGlobalCustom, planSizeX, planSizeY, (planPosX, 0, (-BGModelCube.scale.z / 2)*1.05))
+        if octave % 2 == 0:
+            obj["baseColor"] = 0.2 # Yellow
+        else: 
+            obj["baseColor"] = 0.6 # Cyan
 
     # Animate cubes accordingly to notes event
     for trackIndex, track in enumerate(tracks):
@@ -1448,8 +1616,8 @@ def createWaterFall(masterCollection, trackMask, typeAnim):
     lastNote = bDat.objects[LastNotePlayed]
 
     # Create a new camera
-    cameraData = bpy.data.cameras.new(name="Camera")
-    cameraObj = bpy.data.objects.new("Camera", cameraData)
+    cameraData = bDat.cameras.new(name="Camera")
+    cameraObj = bDat.objects.new("Camera", cameraData)
     masterCollection.objects.link(cameraObj)
 
     # orthographic mode
@@ -1480,7 +1648,7 @@ def createWaterFall(masterCollection, trackMask, typeAnim):
     cameraObj.keyframe_insert(data_path="location", index=1, frame=noteMaxTimeOff[1].timeOff*fps)
 
     # Set the active camera for the scene
-    bCon.scene.camera = cameraObj
+    bScn.camera = cameraObj
 
     # Rendre l'animation linéaire
     action = cameraObj.animation_data.action  # Récupérer l'action d'animation de l'objet
@@ -1489,6 +1657,112 @@ def createWaterFall(masterCollection, trackMask, typeAnim):
     if fcurve:
         for keyframe in fcurve.keyframe_points:
             keyframe.interpolation = 'LINEAR'  # Définir l'interpolation sur 'LINEAR'
+
+"""
+Blender visualisation with fireworks
+Axe X for note in octave
+Axe Y octave
+Axe Z for velocity
+Note length for spread
+Color = Tracks
+
+V1 with sphere
+V2 with trajectory
+"""
+def createFireworks(masterCollection, trackMask, typeAnim):
+
+    wLog("Create a Fireworks Notes Animation type="+typeAnim)
+
+    listOfSelectedTrack = parseRange(trackMask)
+
+    # Create master BG collection
+    FWCollect = create_collection("Fireworks", masterCollection)
+
+    # Create model Sphere
+    BGModelSphere = addIsoSphere(hiddenCollection, "BGModelCube", matGlobalCustom, (0, 0, -5), 1)
+
+    # create sparklesCloudGN and set parameters
+    createSparklesCloudGN("SparklesCloud", BGModelSphere, matGlobalCustom)
+    radiusSparklesCloud = BGModelSphere.modifiers["SparklesCloud"].node_group.interface.items_tree["radiusSparklesCloud"].identifier
+    BGModelSphere.modifiers["SparklesCloud"][radiusSparklesCloud] = 1.0
+    radiusSparkles = BGModelSphere.modifiers["SparklesCloud"].node_group.interface.items_tree["radiusSparkles"].identifier
+    BGModelSphere.modifiers["SparklesCloud"][radiusSparkles] = 0.02
+    densityCloud = BGModelSphere.modifiers["SparklesCloud"].node_group.interface.items_tree["densityCloud"].identifier
+    BGModelSphere.modifiers["SparklesCloud"][densityCloud] = 0.1
+    sparkleMaterial = BGModelSphere.modifiers["SparklesCloud"].node_group.interface.items_tree["sparkleMaterial"].identifier
+    BGModelSphere.modifiers["SparklesCloud"][sparkleMaterial] = matGlobalCustom
+       
+    # Evaluate count of octave
+    noteMin = 1000
+    noteMax = 0
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+        
+        noteMin = min(noteMin, track.minNote)
+        noteMax = max(noteMax, track.maxNote)
+
+    octaveCount = (noteMax // 12) - (noteMin // 12) + 1
+    spaceX = 5
+    spaceY = 5
+    offsetX = 5.5 * spaceX # center of the octave, mean between fifth and sixt note
+    offsetY = (octaveCount * spaceY) - (spaceY / 2)
+
+    # Parse tracks
+    noteCount = 0
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+
+        colorTrack = (trackIndex + 1) / (len(tracks) + 1) # color for track
+        colorTrack = (int(colorTrack * 255) ^ 0xAA) /255 # XOR operation to get a different color
+
+        # create collection
+        FWTrackName = "FW-"+str(trackIndex)+"-"+track.name
+        FWTrackCollect = create_collection(FWTrackName, FWCollect)
+
+        # one sphere per note used
+        for note in track.notesUsed:
+            noteCount += 1
+            # create sphere
+            sphereName = "Sphere-"+str(trackIndex)+"-"+str(note)
+            sphereLinked = createDuplicateLinkedObject(FWTrackCollect, BGModelSphere, sphereName)
+            sphereLinked.location = ((note % 12) * spaceX - offsetX, (note // 12) * spaceY - offsetY, 0)
+            sphereLinked.scale = (0,0,0)
+            sphereLinked["baseColor"] = colorTrack
+            sphereLinked["emissionColor"] = colorTrack
+            sparkleCloudSeed = sphereLinked.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
+            sphereLinked.modifiers["SparklesCloud"][sparkleCloudSeed] = noteCount
+
+        wLog("Fireworks - create "+str(len(track.notesUsed))+" sparkles cloud for track "+ str(trackIndex) +" (range noteMin-noteMax) ("+str(track.minNote)+"-"+str(track.maxNote)+")")
+
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+
+        for currentIndex, note in enumerate(track.notes):
+            # Find the previous note with the same note number
+            previousNote = None
+            for prevIndex in range(currentIndex - 1, -1, -1):
+                if track.notes[prevIndex].noteNumber == note.noteNumber:
+                    previousNote = track.notes[prevIndex]
+                    break
+
+            # Find the next note with the same note number
+            nextNote = None
+            for nextIndex in range(currentIndex + 1, len(track.notes)):
+                if track.notes[nextIndex].noteNumber == note.noteNumber:
+                    nextNote = track.notes[nextIndex]
+                    break
+
+            # Construct the sphere name and animate
+            cubeName = "Sphere-" + str(trackIndex) + "-" + str(note.noteNumber)
+            noteObj = bDat.objects[cubeName]
+            noteAnimate(noteObj, typeAnim, note, previousNote, nextNote)
+
+        wLog("Fireworks - Animate sparkle clouds for track " +str(trackIndex)+" (notesCount) ("+str(len(track.notes))+")")
+
+    return
 
 """
 Main
@@ -1510,6 +1784,39 @@ numNoteToAlpha = {
  120: "C", 121: "C#", 122: "D", 123: "D#", 124: "E", 125: "F", 126: "F#", 127: "G"
 }
 
+# To convert easily from midi notation to octave of note
+# octaves are between 0 and 10
+# Not used for now
+numNoteToOctave = {
+ 0:   0,    1: 0,    2: 0,    3: 0,    4: 0,    5: 0,    6: 0,    7: 0,   8: 0,   9: 0,  10: 0,  11: 0,
+ 12:  1,   13: 1,   14: 1,   15: 1,   16: 1,   17: 1,   18: 1,   19: 1,  20: 1,  21: 1,  22: 1,  23: 1,
+ 24:  2,   25: 2,   26: 2,   27: 2,   28: 2,   29: 2,   30: 2,   31: 2,  32: 2,  33: 2,  34: 2,  35: 2,
+ 36:  3,   37: 3,   38: 3,   39: 3,   40: 3,   41: 3,   42: 3,   43: 3,  44: 3,  45: 3,  46: 3,  47: 3,
+ 48:  4,   49: 4,   50: 4,   51: 4,   52: 4,   53: 4,   54: 4,   55: 4,  56: 4,  57: 4,  58: 4,  59: 4,
+ 60:  5,   61: 5,   62: 5,   63: 5,   64: 5,   65: 5,   66: 5,   67: 5,  68: 5,  69: 5,  70: 5,  71: 5,
+ 72:  6,   73: 6,   74: 6,   75: 6,   76: 6,   77: 6,   78: 6,   79: 6,  80: 6,  81: 6,  82: 6,  83: 6,
+ 84:  7,   85: 7,   86: 7,   87: 7,   88: 7,   89: 7,   90: 7,   91: 7,  92: 7,  93: 7,  94: 7,  95: 7,
+ 96:  8,   97: 8,   98: 8,   99: 8,  100: 8,  101: 8,  102: 8,  103: 8, 104: 8, 105: 8, 106: 8, 107: 8,
+ 108: 9,  109: 9,  110: 9,  111: 9,  112: 9,  113: 9,  114: 9,  115: 9, 116: 9, 117: 9, 118: 9, 119: 9,
+ 120: 10, 121: 10, 122: 10, 123: 10, 124: 10, 125: 10, 126: 10, 127: 10
+}
+
+# To convert easily from midi notation to number of note in octave
+# Not used for now
+numNoteToNumInOctave = {
+ 0:   0,   1: 1,   2: 2,   3: 3,   4: 4,   5: 5,   6: 6,   7: 7,   8: 8,   9: 9,  10: 10,  11: 11,
+ 12:  0,  13: 1,  14: 2,  15: 3,  16: 4,  17: 5,  18: 6,  19: 7,  20: 8,  21: 9,  22: 10,  23: 11,
+ 24:  0,  25: 1,  26: 2,  27: 3,  28: 4,  29: 5,  30: 6,  31: 7,  32: 8,  33: 9,  34: 10,  35: 11,
+ 36:  0,  37: 1,  38: 2,  39: 3,  40: 4,  41: 5,  42: 6,  43: 7,  44: 8,  45: 9,  46: 10,  47: 11,
+ 48:  0,  49: 1,  50: 2,  51: 3,  52: 4,  53: 5,  54: 6,  55: 7,  56: 8,  57: 9,  58: 10,  59: 11,
+ 60:  0,  61: 1,  62: 2,  63: 3,  64: 4,  65: 5,  66: 6,  67: 7,  68: 8,  69: 9,  70: 10,  71: 11,
+ 72:  0,  73: 1,  74: 2,  75: 3,  76: 4,  77: 5,  78: 6,  79: 7,  80: 8,  81: 9,  82: 10,  83: 11,
+ 84:  0,  85: 1,  86: 2,  87: 3,  88: 4,  89: 5,  90: 6,  91: 7,  92: 8,  93: 9,  94: 10,  95: 11,
+ 96:  0,  97: 1,  98: 2,  99: 3, 100: 4, 101: 5, 102: 6, 103: 7, 104: 8, 105: 9, 106: 10, 107: 11,
+ 108: 0, 109: 1, 110: 2, 111: 3, 112: 4, 113: 5, 114: 6, 115: 7, 116: 8, 117: 9, 118: 10, 119: 11,
+ 120: 0, 121: 1, 122: 2, 123: 3, 124: 4, 125: 5, 126: 6, 127: 7
+}
+
 timeStart = time.time()
 
 # path and name of midi file and so on - temporary => replaced when this become an Blender Extension
@@ -1517,17 +1824,16 @@ path = "W:\\MIDI\\Samples"
 # filename = "MIDI Sample"
 # filename = "MIDI Sample C3toC4"
 # filename = "pianoTest"
-filename = "sampleFountain"
 # filename = "T1_CDL"
+filename = "Albinoni"
 # filename = "RushE"
 # filename = "MIDI-Testing"
-# filename = "T1"
 # filename = "49f692270904997536e8f5c1070ac880" # Multi channel classical
 # filename = "PianoClassique3Tracks978Mesures"
 # filename = "ManyTracks"
 # filename = "067dffc37b3770b4f1c246cc7023b64d" # One channel Biggest 35188 notes
-# filename = "a4727cd831e7aff3df843a3da83e8968" # Next test
-# filename = "4cd07d39c89de0f2a3c7b2920a0e0010"
+# filename = "a4727cd831e7aff3df843a3da83e8968" # Test 1 track with several channels
+# filename = "4cd07d39c89de0f2a3c7b2920a0e0010" # Test 1 track with several channels
 
 pathMidiFile = path + "\\" + filename + ".mid"
 pathAudioFile = path + "\\" + filename + ".mp3"
@@ -1611,18 +1917,26 @@ hiddenCollection.hide_viewport = True
 
 matGlobalCustom = CreateMatGlobalCustom()
 
-# createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Scale")
-# createBlenderBGAnimation(masterCollection, "0-15", typeAnim="Light")
-# createBlenderBGAnimation(masterCollection, "0-30", typeAnim="Light,Scale")
-# createStripNotes(masterCollection, "3,9,11", typeAnim="Scale")
+# createBlenderBGAnimation(masterCollection, "0-15", typeAnim="ZScale")
+# createBlenderBGAnimation(masterCollection, "0-7", typeAnim="Light")
+# createBlenderBGAnimation(masterCollection, "0-30", typeAnim="ZScale,Light")
+# createStripNotes(masterCollection, "3,9,11", typeAnim="ZScale")
 # createStripNotes(masterCollection, "0-15", typeAnim="Light")
-# createWaterFall(masterCollection, "0-15", typeAnim="Scale")
-createWaterFall(masterCollection, "0-15", typeAnim="Light")
-# createWaterFall(masterCollection, "0-15", typeAnim="Scale,Light")
+# createStripNotes(masterCollection, "0-15", typeAnim="ZScale,Light")
+# createWaterFall(masterCollection, "0-15", typeAnim="ZScale")
+# createWaterFall(masterCollection, "0-15", typeAnim="Light")
+# createWaterFall(masterCollection, "0-15", typeAnim="ZScale,Light")
+createFireworks(masterCollection, "0-15", typeAnim="Spread")
+# createFireworks(masterCollection, "0-15", typeAnim="Spread,Light")
 
 bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
 createCompositorNodes()
+
 viewportShadingRendered()
+
+# GUI_maximizeAeraView("VIEW_3D")
+# collapseAllCollectionInOutliner()
+toggle_collection_collapse(2)
 
 # Close log file
 wLog("Script Finished: %.2f sec" % (time.time() - timeStart))

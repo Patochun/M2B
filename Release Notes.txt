@@ -1,6 +1,25 @@
 
 Release notes :
 
+MTB V7
+
+- Review for camelCase usage
+- BarGraph view
+    - Create multiple backplane versus only one, each of them to figure each octave used with different color
+    - Fix Axe Y position for notes
+- MatGlobalCustom
+    - Renaming internal
+    - Change colorRamp for emissionColor to be the same as for baseColor
+    - baseColor and emissionColor are now black, white, blue, red, Yellow, green, cyan)
+        - Blue to red is used for Light Animation intensity
+- Animation Scale
+    - Renamed as ZScale
+- Animation Light
+    - Adjust velocity away from the median towards the edges
+- Adjust compositor
+    BLOOM => MEDIUM quality, threshold = 5, size = 4
+- New visualisation fireworks V1 using geometry nodes
+
 MTB V6
 
 - Remove channels objects and work only with track
