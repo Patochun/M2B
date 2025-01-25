@@ -9,6 +9,8 @@ MTB V2
 - Testing for midi format 0, 1 et 2
     - Secure ASCII decoding for values above 128 (use latin-1 instead)MTB V1
 
+MTB V1
+
 - Inform if fps is good or not (>=50 is good)
 - Reuse of MIDI parser
 - Read MIDI datas
