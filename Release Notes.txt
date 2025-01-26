@@ -20,7 +20,8 @@ MTB V8
 - TODO
     - visualisation Fountain
         - What to do if mutitrack reach target at the same time
-        - Multicolor ?
+            - Multicolor ?
+        - Test formula and driver to be more dynamic
     - Add a notion of draft and rendering version
     - Harmonize head of each function (comments)
     - Visualisation next :
