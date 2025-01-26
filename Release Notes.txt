@@ -11,6 +11,7 @@ MTB V8
         - Delay to reach it
     - Animate target octave/note
         - Emission color according to sphere note from track
+    - Emitter along rotational curve
 - parseRangeFromTracks return selectd Tracks of course but now, also noteMin, noteMax, OctaveCount
 - New Visualization Fireworks V2 using Particles System
 - New visualisation Fountain
