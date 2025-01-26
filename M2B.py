@@ -920,20 +920,33 @@ def createRectangularPlane(collection, name, material, width=1, height=1, locati
     collect_to_unlink.objects.unlink(plane)
     return plane
 
-# Create iso Sphere
-def addIsoSphere(collection, name, material, location=(0,0,0), radius=1.0):
-    # Add an isosphere at the specified location
+# Create ico Sphere
+def addIcoSphere(collection, name, material, location=(0,0,0), radius=1.0):
+    # Add an icosphere at the specified location
     bOps.mesh.primitive_ico_sphere_add(radius=radius, location=location)
     sphere = bCon.active_object
     sphere.name = name
     sphere.location = location
     sphere.data.materials.append(material)
     createCustomAttributes(sphere)
-    # Move the isosphere to the specified collection
+    # Move the icosphere to the specified collection
     collect_to_unlink = find_collection(bCon, sphere)
     collection.objects.link(sphere)
     collect_to_unlink.objects.unlink(sphere)
     return sphere
+
+# Create a new Bézier circle
+def addBezierCircle(collection, name, location=(0,0,0), radius=1.0):
+    bezierCircle = bOps.curve.primitive_bezier_circle_add
+    bezierCircle(location=location, radius=radius)
+    bezierCircleObj = bCon.object
+    bezierCircleObj.name = name
+    bezierCircleObj.data.resolution_u = 12  # Default is 12, increase for smoother curves
+    # Move the bezierCircle to the specified collection
+    collect_to_unlink = find_collection(bCon, bezierCircleObj)
+    collection.objects.link(bezierCircleObj)
+    collect_to_unlink.objects.unlink(bezierCircleObj)
+    return bezierCircleObj
 
 # Create Rectangular Cube
 def addCube(collection, name, material, bevel=False, location=(0,0,0), scale=(1,1,1)):
@@ -1132,7 +1145,7 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
                 Obj.location.z = 0
                 Obj.keyframe_insert(data_path="scale", index=2, frame=frameT4)  # downscaling
                 Obj.keyframe_insert(data_path="location", index=2, frame=frameT4)
-            case "Light":
+            case "Light": # velocity animate light from blue to red
                 brightness = note.velocity * 10 # 2 ** (velocity ** 10)
                 # Constrain velocityBlueToRed based on note.velocity
                 minValue = 0.02
@@ -1461,10 +1474,25 @@ def createSparklesCloudGN(nameGN, obj, sparklesMaterial):
     wLog(f"Geometry Nodes '{nameGN}' created successfully!")
     return
 
+# Retrieve location at frame from any Object
+def getObjPositionAtFrame(obj, frame):
+    # Save current frame
+    # currentFrame = bCon.scene.frame_current
+    # Go to frame specified
+    bCon.scene.frame_set(int(frame))
+    # Force update scene
+    bCon.view_layer.update()
+    # Get worldPos of obj
+    worldPos = obj.matrix_world.translation.copy()
+    # Restore saved frame
+    # bCon.scene.frame_set(currentFrame)
+    return worldPos
+
+# Retrieve octave and noteNumber from note
 def extractOctaveAndNote(note):
     octave = note // 12
-    note = note % 12
-    return octave, note
+    noteNumber = note % 12
+    return octave, noteNumber
 
 """
 Blender visualisation one BarGraph by track
@@ -1757,7 +1785,7 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
     FWCollect = create_collection("FireworksV1", masterCollection)
 
     # Create model Sphere
-    FWModelSphere = addIsoSphere(hiddenCollection, "BGModelCube", matGlobalCustom, (0, 0, -5), 1)
+    FWModelSphere = addIcoSphere(hiddenCollection, "BGModelCube", matGlobalCustom, (0, 0, -5), 1)
 
     # create sparklesCloudGN and set parameters
     createSparklesCloudGN("SparklesCloud", FWModelSphere, matGlobalCustom)
@@ -1855,8 +1883,8 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
     FWCollect = create_collection("FireworksV2", masterCollection)
 
     # Create model objects
-    FWModelEmitter = addIsoSphere(hiddenCollection, "FWV2Emitter", matGlobalCustom, (0, 0, -5), 1)
-    FWModelSparkle = addIsoSphere(hiddenCollection, "FWV2Sparkles", matGlobalCustom, (0, 0, -5), 0.1)
+    FWModelEmitter = addIcoSphere(hiddenCollection, "FWV2Emitter", matGlobalCustom, (0, 0, -5), 1)
+    FWModelSparkle = addIcoSphere(hiddenCollection, "FWV2Sparkles", matGlobalCustom, (0, 0, -5), 0.1)
 
     spaceX = 5
     spaceY = 5
@@ -1950,44 +1978,6 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
 
     return
 
-def createDancer(masterCollection, trackMask, typeAnim):
-    wLog("Create a Dancer Animation type=" + typeAnim)
-
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
-
-    # Create master BG collection
-    dancerCollection = create_collection("Dancer", masterCollection)
-
-    # Create model objects
-    dancerModelCube = addCube(hiddenCollection, "DancerModelCube", matGlobalCustom, False, (0, 0, -5), (1, 1, 1))
-    dancerModelSphere = addIsoSphere(hiddenCollection, "DancerModelSphere", matGlobalCustom, (0, 0, -5), 1)
-    dancerModelCylinder = addCylinder(hiddenCollection, "DancerModelCylinder", matGlobalCustom, (0, 0, -5), 1, 1)
-
-    # Dancer - Body descriptor with part relationships
-    bodyDescriptor = [
-        {"name": "Head",        "shape": "Sph", "scale": (9.08, 9.08, 10.8), "above": None,           "below": "Neck",      "left": None,       "right": None},
-        {"name": "Neck",        "shape": "Cyl", "scale": (4, 4, 9),          "above": "Head",         "below": "Shoulders", "left": None,       "right": None},
-        {"name": "Shoulders",   "shape": "Cub", "scale": (25, 25, 25),       "above": "Neck",         "below": "Chest",     "left": None,       "right": None},
-        {"name": "Chest",       "shape": "Cyl", "scale": (22.5, 22.5, 15),   "above": "Shoulders",    "below": "Waist",     "left": None,       "right": None},
-        {"name": "Waist",       "shape": "Cyl", "scale": (42.5, 42.5, 10),   "above": "Chest",        "below": "Hips",      "left": None,       "right": None},
-        {"name": "Hips",        "shape": "Cyl", "scale": (25, 25, 15),       "above": "Waist",        "below": "Thigh",     "left": None,       "right": None},
-        {"name": "Torso",       "shape": "Cyl", "scale": (22.5, 22.5, 33.3), "above": "Hips",         "below": "Leg",       "left": None,       "right": None},
-        {"name": "LeftArm",     "shape": "Cyl", "scale": (16.5, 16.5, 33.3), "above": None,           "below": None,        "left": "Shoulders","right": None},
-        {"name": "RightArm",    "shape": "Cyl", "scale": (16.5, 16.5, 33.3), "above": None,           "below": None,        "left": None,       "right": "Shoulders"},
-        {"name": "LeftForearm", "shape": "Cyl", "scale": (12, 12, 22),       "above": "LeftArm",      "below": "LeftHand",  "left": None,       "right": None},
-        {"name": "RightForearm","shape": "Cyl", "scale": (12, 12, 22),       "above": "RightArm",     "below": "RightHand", "left": None,       "right": None},
-        {"name": "LeftHand",    "shape": "Sph", "scale": (9.5, 9.5, 9.5),    "above": "LeftForearm",  "below": None,        "left": None,       "right": None},
-        {"name": "RightHand",   "shape": "Sph", "scale": (9.5, 9.5, 9.5),    "above": "RightForearm", "below": None,        "left": None,       "right": None},
-        {"name": "LeftThigh",   "shape": "Cyl", "scale": (27.5, 27.5, 25),   "above": "Hips",         "below": "LeftCalf",  "left": None,       "right": None},
-        {"name": "RightThigh",  "shape": "Cyl", "scale": (27.5, 27.5, 25),   "above": "Hips",         "below": "RightCalf", "left": None,       "right": None},
-        {"name": "LeftCalf",    "shape": "Cyl", "scale": (16.4, 16.4, 16.4), "above": "LeftThigh",    "below": "LeftFoot",  "left": None,       "right": None},
-        {"name": "RightCalf",   "shape": "Cyl", "scale": (16.4, 16.4, 16.4), "above": "RightThigh",   "below": "RightFoot", "left": None,       "right": None},
-        {"name": "LeftLeg",     "shape": "Cyl", "scale": (22.5, 22.5, 41.4), "above": "LeftCalf",     "below": None,        "left": None,       "right": None},
-        {"name": "RightLeg",    "shape": "Cyl", "scale": (22.5, 22.5, 41.4), "above": "RightCalf",    "below": None,        "left": None,       "right": None},
-        {"name": "LeftFoot",    "shape": "Sph", "scale": (13.5, 13.5, 13.5), "above": "LeftCalf",     "below": None,        "left": None,       "right": None},
-        {"name": "RightFoot",   "shape": "Sph", "scale": (13.5, 13.5, 13.5), "above": "RightCalf",    "below": None,        "left": None,       "right": None}
-    ]
-
 def createFountain(masterCollection, trackMask, typeAnim):
 
     wLog("Create a Fountain Animation type=" + typeAnim)
@@ -1998,10 +1988,10 @@ def createFountain(masterCollection, trackMask, typeAnim):
     fountainCollection = create_collection("Fountain", masterCollection)
 
     # Create model objects
-    fountainModelPlane = createRectangularPlane(hiddenCollection, "fountainModelPlane", matGlobalCustom, 1, 1, (0, 0, 10))
-    # fountainModelParticle = addIsoSphere(hiddenCollection, "fountainModelParticle", matGlobalCustom, (0, 0, -5), 1)
-    fountainModelParticle = addCube(hiddenCollection, "fountainModelParticle", matGlobalCustom, (0, 0, -5), (1,1,1))
-    fountainModelEmitter = addCylinder(hiddenCollection, "fountainModelEmitter", matGlobalCustom, (0, 0, -5), 1, 1)
+    fountainModelPlane = createRectangularPlane(hiddenCollection, "fountainModelPlane", matGlobalCustom, 1, 1, (0, 0, -10))
+    # fountainModelParticle = addIcoSphere(hiddenCollection, "fountainModelParticle", matGlobalCustom, (0, 0, -5), 1)
+    fountainModelParticle = addCube(hiddenCollection, "fountainModelParticle", matGlobalCustom, False, (2, 0, -10), (1,1,1))
+    fountainModelEmitter = addCylinder(hiddenCollection, "fountainModelEmitter", matGlobalCustom, (4, 0, -10), 1, 1)
 
     # Construction of the fountain Targets
     theta = math.radians(360)  # 2 Pi, just one circle
@@ -2032,6 +2022,31 @@ def createFountain(masterCollection, trackMask, typeAnim):
         # Add collision Physics
         targetObj.modifiers.new(name="Collision", type='COLLISION')  
 
+    wLog("Fountain - create 132 targets")
+
+    # Create circle curve for trajectory of emitters
+    emitterTrajectory = addBezierCircle(hiddenCollection, "emitterTrajectory")
+    emitterTrajectory.location = (0, 0, 3)
+    emitterTrajectory.scale = (20, 20, 20)
+
+    # Add rotation animation
+    rotationSpeed = 0.05  # Rotations per second
+    startFrame = 1
+    endFrame = int(lastNoteTimeOff * fps)  # Use global lastNoteTimeOff
+    totalRotations = rotationSpeed * lastNoteTimeOff
+
+    # Set keyframes for Z rotation
+    emitterTrajectory.rotation_euler.z = 0
+    emitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=startFrame)
+
+    emitterTrajectory.rotation_euler.z = totalRotations * 2 * math.pi  # Convert to radians
+    emitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=endFrame)
+
+    # Make animation linear
+    for fcurve in emitterTrajectory.animation_data.action.fcurves:
+        for keyframe in fcurve.keyframe_points:
+            keyframe.interpolation = 'LINEAR'
+
     g = -bScn.gravity[2]  # z gravity from blender (m/s^2)
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
@@ -2043,7 +2058,7 @@ def createFountain(masterCollection, trackMask, typeAnim):
         particleName = "Particle-" + str(trackIndex) + "-" + track.name
         particleObj = createDuplicateLinkedObject(fountainCollection, fountainModelParticle, particleName)
         particleObj.name = particleName
-        particleObj.location = (0, 0, -10)
+        particleObj.location = (trackIndex * 2, 0, -12)
         particleObj.scale = (0.5,0.5,0.5)
         particleObj["baseColor"] = colorTrack
         particleObj["emissionColor"] = colorTrack
@@ -2052,17 +2067,27 @@ def createFountain(masterCollection, trackMask, typeAnim):
         # Emitter around the targets
         emitterName = "Emitter-" + str(trackIndex) + "-" + track.name
         emitterObj = createDuplicateLinkedObject(fountainCollection, fountainModelEmitter, emitterName)
-        # emitterObj.location = (15, 0, 3 + trackIndex * 2)
 
-        pX = math.cos(math.radians(360 * trackIndex / tacksProcessed)) * 18
-        pY = math.sin(math.radians(360 * trackIndex / tacksProcessed)) * 18
-        pZ = 3
+        # Add Clamp To constraint
+        clampConstraint = emitterObj.constraints.new(type='CLAMP_TO')
+        clampConstraint.target = emitterTrajectory
+        clampConstraint.use_cyclic = True  # Enable cyclic for closed curve
 
-        emitterObj.location = (pX, pY, pZ)
-        # emitterObj.location = (0, 0, 3 + trackIndex * 2)
+        # Calculate position on curve (0 to 1)
+        curvePosition = trackIndex / tacksProcessed
+        clampConstraint.target_space = 'LOCAL'
+
+        # pX = math.cos(math.radians(360 * trackIndex / tacksProcessed)) * 18
+        # pY = math.sin(math.radians(360 * trackIndex / tacksProcessed)) * 18
+        # pZ = 3
+        # emitterObj.location = (pX, pY, pZ)
+        emitterObj.location = (4*curvePosition, 0, 0)
         emitterObj.scale = (1, 1, 0.2)
         emitterObj["baseColor"] = colorTrack
         emitterObj["emissionColor"] = colorTrack
+
+        # Set initial position on curve
+        clampConstraint.main_axis = 'CLAMPTO_X'  # Use X axis for clamping
 
         # One particle per note
         for currentIndex, note in enumerate(track.notes):
@@ -2096,11 +2121,16 @@ def createFountain(masterCollection, trackMask, typeAnim):
             particleSettings.grid_random = 0
 
             # Configure particle system settings - Velocity
-
             # inital position
-            x0 = emitterObj.location.x
-            y0 = emitterObj.location.y
-            z0 = emitterObj.location.z
+            emitterlocation = getObjPositionAtFrame(emitterObj, particleSettings.frame_start)
+
+            x0 = emitterlocation[0]
+            y0 = emitterlocation[1]
+            z0 = emitterlocation[2]
+
+            # x0 = emitterObj.location.x
+            # y0 = emitterObj.location.y
+            # z0 = emitterObj.location.z
 
             # Retrieve Target Position
             targetName = "Target-" + str(numNote) + "-" + str(octave)
@@ -2126,6 +2156,8 @@ def createFountain(masterCollection, trackMask, typeAnim):
 
             # Configure particle system settings - Fields Weights
             particleSettings.effector_weights.gravity = 1
+
+        wLog("Fountain - create "+str(currentIndex)+" particles for track "+ str(trackIndex))
 
     # Animation of target notes
     for trackIndex, track in enumerate(tracks):
@@ -2154,6 +2186,8 @@ def createFountain(masterCollection, trackMask, typeAnim):
             targetName = "Target-" + str(numNote) + "-" + str(octave)
             noteObj = bDat.objects[targetName]
             noteAnimate(noteObj, "MultiLight", note, previousNote, nextNote, colorTrack)
+
+        wLog("Fountain - animate targets for track "+ str(trackIndex))
 
     return
 
@@ -2218,8 +2252,8 @@ path = "W:\\MIDI\\Samples"
 # filename = "MIDI Sample C3toC4"
 # filename = "pianoTest"
 # filename = "sampleFountain"
-# filename = "T1_CDL" # midifile 1
-filename = "Albinoni"
+filename = "T1_CDL" # midifile 1
+# filename = "Albinoni"
 # filename = "RushE"
 # filename = "MIDI-Testing"
 # filename = "49f692270904997536e8f5c1070ac880" # Midifile 1 - Multi tracks classical
@@ -2298,7 +2332,6 @@ wLog("note mid range =  " + str(noteMidRange))
 wLog("Start on first note timeOn in sec =  " + str(firstNoteTimeOn))
 wLog("End on Last note timeOff in sec =  " + str(lastNoteTimeOff))
 
-
 """
 Blender part
 """
@@ -2324,15 +2357,12 @@ matGlobalCustom = CreateMatGlobalCustom()
 # createFireworksV1(masterCollection, "0-15", typeAnim="Spread,Light")
 # createFireworksV2(masterCollection, "0-15", typeAnim="Spread")
 # createFireworksV2(masterCollection, "0-15", typeAnim="Spread,Light")
-# createDancer(masterCollection, "1", typeAnim="")
 createFountain(masterCollection, "0-15", typeAnim="fountain")
-    
     
 bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
 createCompositorNodes()
 
 # viewportShadingRendered()
-
 # GUI_maximizeAeraView("VIEW_3D")
 # collapseAllCollectionInOutliner()
 toggle_collection_collapse(2)
