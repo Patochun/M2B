@@ -830,10 +830,10 @@ def clearCollection(collection):
     for obj in list(collection.objects):
         bDat.objects.remove(obj, do_unlink=True)
 
-def purge_unused_data():
+def purgeUnusedDatas():
     """
     Purge all orphaned (unused) data in the current Blender file.
-    This includes unused objects, materials, textures, collections, etc.
+    This includes unused objects, materials, textures, collections, particles, etc.
     """
     
     # Purge orphaned objects, meshes, lights, cameras, and other data
@@ -842,34 +842,83 @@ def purge_unused_data():
     # Force update in case orphan purge needs cleanup
     # bCon.view_layer.update()
     
+    purgedItems = 0
+
+    # Clean orphaned objects
+    for obj in bDat.objects:
+        if not obj.users:
+            bDat.objects.remove(obj)
+            purgedItems += 1
+
+    # Clean orphaned curves
+    for curve in bDat.curves:
+        if not curve.users:
+            bDat.curves.remove(curve)
+            purgedItems += 1
+    
     # Clear orphaned collections
     for collection in bDat.collections:
         if not collection.objects:
             # If the collection has no objects, remove it
             bDat.collections.remove(collection)
+            purgedItems += 1
 
     # Clean orphaned meshes
     for mesh in bDat.meshes:
         if not mesh.users:
             bDat.meshes.remove(mesh)
+            purgedItems += 1
     
     # Clean orphaned materials
     for mat in bDat.materials:
         if not mat.users:
             bDat.materials.remove(mat)
+            purgedItems += 1
 
     # Clean orphaned textures
     for tex in bDat.textures:
         if not tex.users:
             bDat.textures.remove(tex)
+            purgedItems += 1
     
     # Clean orphaned images
     for img in bDat.images:
         if not img.users:
             bDat.images.remove(img)
+            purgedItems += 1
+            
+    # Clean orphaned particle settings
+    for ps in bDat.particles:
+        if not ps.users:
+            bDat.particles.remove(ps)
+            purgedItems += 1
+            
+    # Clean orphaned node groups
+    for ng in bDat.node_groups:
+        if not ng.users:
+            bDat.node_groups.remove(ng)
+            purgedItems += 1
+            
+    # Clean orphaned actions
+    for action in bDat.actions:
+        if not action.users:
+            bDat.actions.remove(action)
+            purgedItems += 1
+
+    # Clean orphaned collections
+    for collection in bDat.collections:
+        if not collection.users:
+            bDat.collections.remove(collection)
+            purgedItems += 1
+
+    # Clean orphaned sounds
+    for sound in bDat.sounds:
+        if not sound.users:
+            bDat.sounds.remove(sound)
+            purgedItems += 1
 
     # Log the results
-    wLog("Purging complete. Orphaned data cleaned up.")
+    wLog("Purging complete. "+str(purgedItems)+" Orphaned datas cleaned up.")
 
 def createCustomAttributes(obj):
     # Add custom attributes
@@ -1174,7 +1223,9 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
             case "MultiLight":
                 brightness = 5 + note.velocity * 10
                 # set initial lighing before note On (T1)
+                Obj["emissionColor"] = colorTrack
                 Obj["emissionStrength"] = 0.0
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT1)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
                 # Upscale lighting on timeOn (T2)
                 Obj["emissionColor"] = colorTrack
@@ -1182,9 +1233,14 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
                 Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT2)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
                 # Keep actual lighting before note Off (T3)
+                Obj["emissionColor"] = colorTrack
+                Obj["emissionStrength"] = brightness
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT3)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT3)
                 # reset ligthing to initial state on timeOff (T4)
+                Obj["emissionColor"] = colorTrack
                 Obj["emissionStrength"] = 0.0
+                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT4)
                 Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
             case "Spread":
                 posZ = note.velocity * 30
@@ -1343,6 +1399,7 @@ def CreateMatGlobalCustom():
     return mat
 
 def createCompositorNodes():
+
     # Enable the compositor
     bScn.use_nodes = True
     nodeTree = bScn.node_tree
@@ -2025,9 +2082,9 @@ def createFountain(masterCollection, trackMask, typeAnim):
     wLog("Fountain - create 132 targets")
 
     # Create circle curve for trajectory of emitters
-    emitterTrajectory = addBezierCircle(hiddenCollection, "emitterTrajectory")
-    emitterTrajectory.location = (0, 0, 3)
-    emitterTrajectory.scale = (20, 20, 20)
+    fountainEmitterTrajectory = addBezierCircle(hiddenCollection, "fountainEmitterTrajectory")
+    fountainEmitterTrajectory.location = (0, 0, 3)
+    fountainEmitterTrajectory.scale = (20, 20, 20)
 
     # Add rotation animation
     rotationSpeed = 0.05  # Rotations per second
@@ -2036,18 +2093,28 @@ def createFountain(masterCollection, trackMask, typeAnim):
     totalRotations = rotationSpeed * lastNoteTimeOff
 
     # Set keyframes for Z rotation
-    emitterTrajectory.rotation_euler.z = 0
-    emitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=startFrame)
+    fountainEmitterTrajectory.rotation_euler.z = 0
+    fountainEmitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=startFrame)
 
-    emitterTrajectory.rotation_euler.z = totalRotations * 2 * math.pi  # Convert to radians
-    emitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=endFrame)
+    fountainEmitterTrajectory.rotation_euler.z = totalRotations * 2 * math.pi  # Convert to radians
+    fountainEmitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=endFrame)
 
     # Make animation linear
-    for fcurve in emitterTrajectory.animation_data.action.fcurves:
+    for fcurve in fountainEmitterTrajectory.animation_data.action.fcurves:
         for keyframe in fcurve.keyframe_points:
             keyframe.interpolation = 'LINEAR'
 
     g = -bScn.gravity[2]  # z gravity from blender (m/s^2)
+
+    delayImpact = 3.0  # Time in second from emitter to target
+    frameDelayImpact = delayImpact * fps
+
+    # Create empty object for storing somes constants for drivers
+    fountainConstantsObj = bDat.objects.new("fountainConstantsValues", None)
+    fountainConstantsObj.location=(6,0,-10)
+    hiddenCollection.objects.link(fountainConstantsObj)
+    fountainConstantsObj["delay"] = delayImpact
+
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
@@ -2056,10 +2123,10 @@ def createFountain(masterCollection, trackMask, typeAnim):
 
         # Particle
         particleName = "Particle-" + str(trackIndex) + "-" + track.name
-        particleObj = createDuplicateLinkedObject(fountainCollection, fountainModelParticle, particleName)
+        particleObj = createDuplicateLinkedObject(hiddenCollection, fountainModelParticle, particleName)
         particleObj.name = particleName
         particleObj.location = (trackIndex * 2, 0, -12)
-        particleObj.scale = (0.5,0.5,0.5)
+        particleObj.scale = (0.3,0.3,0.3)
         particleObj["baseColor"] = colorTrack
         particleObj["emissionColor"] = colorTrack
         particleObj["emissionStrength"] = 8.0
@@ -2070,18 +2137,14 @@ def createFountain(masterCollection, trackMask, typeAnim):
 
         # Add Clamp To constraint
         clampConstraint = emitterObj.constraints.new(type='CLAMP_TO')
-        clampConstraint.target = emitterTrajectory
+        clampConstraint.target = fountainEmitterTrajectory
         clampConstraint.use_cyclic = True  # Enable cyclic for closed curve
 
         # Calculate position on curve (0 to 1)
         curvePosition = trackIndex / tacksProcessed
         clampConstraint.target_space = 'LOCAL'
 
-        # pX = math.cos(math.radians(360 * trackIndex / tacksProcessed)) * 18
-        # pY = math.sin(math.radians(360 * trackIndex / tacksProcessed)) * 18
-        # pZ = 3
-        # emitterObj.location = (pX, pY, pZ)
-        emitterObj.location = (4*curvePosition, 0, 0)
+        emitterObj.location = (4 * curvePosition, 0, 0) # *4 ?
         emitterObj.scale = (1, 1, 0.2)
         emitterObj["baseColor"] = colorTrack
         emitterObj["emissionColor"] = colorTrack
@@ -2103,15 +2166,13 @@ def createFountain(masterCollection, trackMask, typeAnim):
             particleSettings = bDat.particles.new(name=pSettingName)
             particleSystem.particle_system.settings = particleSettings
 
-            delayImpact = 3.0  # Time in second from emitter to target
-            frameDelayImpact = delayImpact * fps
-
             # Configure particle system settings - Emission
             particleSettings.count = 1
             particleSettings.lifetime = fps * 4
             # Be sure to initialize frame_end before frame_start because
             # frame_start can't be greather than frame_end at any time
-            particleSettings.frame_end = frameTimeOff - frameDelayImpact
+            # particleSettings.frame_end = frameTimeOff - frameDelayImpact
+            particleSettings.frame_end = frameTimeOn - frameDelayImpact + 1
             particleSettings.frame_start = frameTimeOn - frameDelayImpact
 
             # Configure particle system settings - Emission - Source
@@ -2120,34 +2181,44 @@ def createFountain(masterCollection, trackMask, typeAnim):
             particleSettings.grid_resolution = 1
             particleSettings.grid_random = 0
 
-            # Configure particle system settings - Velocity
-            # inital position
-            emitterlocation = getObjPositionAtFrame(emitterObj, particleSettings.frame_start)
-
-            x0 = emitterlocation[0]
-            y0 = emitterlocation[1]
-            z0 = emitterlocation[2]
-
-            # x0 = emitterObj.location.x
-            # y0 = emitterObj.location.y
-            # z0 = emitterObj.location.z
-
-            # Retrieve Target Position
+            # Configure particle system settings - Velocity - Using drivers
+            # Retrieve Target Object
             targetName = "Target-" + str(numNote) + "-" + str(octave)
             target = bDat.objects[targetName]
-            xt = target.location.x
-            yt = target.location.y
-            zt = target.location.z
 
-            # calculate vectors in m/s
-            vx = (xt - x0) / delayImpact
-            vy = (yt - y0) / delayImpact
-            vz = (zt - z0 + 0.5 * g * delayImpact**2) / delayImpact
+            # Add drivers for object_align_factors
+            for i, axis in enumerate(['X', 'Y', 'Z']):
+                driver = particleSettings.driver_add('object_align_factor', i).driver
+                driver.type = 'SCRIPTED'
+                
+                # Add variables for emitter position
+                varE = driver.variables.new()
+                varE.name = f"e{axis}"
+                varE.type = 'TRANSFORMS'
+                varE.targets[0].id = emitterObj
+                varE.targets[0].transform_type = f'LOC_{axis}'
+                varE.targets[0].transform_space = 'WORLD_SPACE'
+                
+                # Add variables for target position
+                varT = driver.variables.new()
+                varT.name = f"t{axis}"
+                varT.type = 'TRANSFORMS'
+                varT.targets[0].id = target
+                varT.targets[0].transform_type = f'LOC_{axis}'
+                varT.targets[0].transform_space = 'WORLD_SPACE'
+                
+                # Add delay variable (from emitter object)
+                varDelay = driver.variables.new()
+                varDelay.name = "delay" 
+                varDelay.type = 'SINGLE_PROP'
+                varDelay.targets[0].id = fountainConstantsObj
+                varDelay.targets[0].data_path = '["delay"]'
 
-            particleSettings.normal_factor = 1
-            particleSettings.object_align_factor[0] = vx
-            particleSettings.object_align_factor[1] = vy
-            particleSettings.object_align_factor[2] = vz
+                if axis == 'Z':
+                    # driver.expression = f"(t{axis} - e{axis} - 0.5 * g * delay**2) / delay" # initiale expression
+                    driver.expression = f"(t{axis} - e{axis} + 4.905 * delay*delay) / delay" # Optimized expression to avoid "Slow Python Expression"
+                else:
+                    driver.expression = f"(t{axis} - e{axis}) / delay"
 
             # Configure particle system settings - Render
             particleSettings.render_type = 'OBJECT'
@@ -2252,7 +2323,7 @@ path = "W:\\MIDI\\Samples"
 # filename = "MIDI Sample C3toC4"
 # filename = "pianoTest"
 # filename = "sampleFountain"
-filename = "T1_CDL" # midifile 1
+# filename = "T1_CDL" # midifile 1
 # filename = "Albinoni"
 # filename = "RushE"
 # filename = "MIDI-Testing"
@@ -2260,7 +2331,7 @@ filename = "T1_CDL" # midifile 1
 # filename = "PianoClassique3Tracks978Mesures"
 # filename = "ManyTracks" # Midifile 1 - 28 tracks
 # filename = "067dffc37b3770b4f1c246cc7023b64d" # One channel Biggest 35188 notes
-# filename = "a4727cd831e7aff3df843a3da83e8968" # Midifile 0 -  1 track with several channels
+filename = "a4727cd831e7aff3df843a3da83e8968" # Midifile 0 -  1 track with several channels
 # filename = "4cd07d39c89de0f2a3c7b2920a0e0010" # Midifile 0 - 1 track with several channels
 
 pathMidiFile = path + "\\" + filename + ".mid"
@@ -2337,7 +2408,7 @@ Blender part
 """
 
 # setBlenderUnits()
-purge_unused_data()
+purgeUnusedDatas()
 masterCollection = create_collection("MTB", bScn.collection)
 hiddenCollection = create_collection("Hidden", masterCollection)
 hiddenCollection.hide_viewport = True
@@ -2360,6 +2431,7 @@ matGlobalCustom = CreateMatGlobalCustom()
 createFountain(masterCollection, "0-15", typeAnim="fountain")
     
 bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
+
 createCompositorNodes()
 
 # viewportShadingRendered()
