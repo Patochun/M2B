@@ -3,6 +3,8 @@ Release notes :
 
 MTB V8
 
+- All objects created are parented to empty in specific collection named "MasterLocation"
+    - One empty plain axe by collection
 - If MIDIfile type is 0 then explode N channels from working track 0 to N tracks
 - Visualisation Foutain
     - Calculate x,y,z velocity according to :

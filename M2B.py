@@ -30,6 +30,9 @@ bCon = bpy.context
 bScn = bCon.scene
 bOps = bpy.ops
 
+# Global list to store used colors
+usedColors = []
+
 """
 MIDI module imported from https://github.com/JacquesLucke/animation_nodes
 I was the initiator and participated in the implementation of the MIDI module in Animation Nodes
@@ -811,8 +814,8 @@ def collapseAllCollectionInOutliner():
 
     wLog("No OUTLINER area found in the current context.")
        
-# Create collection
-def create_collection(collection_name, parent_collection):
+# Create collection and master location (empty axis)
+def createCollection(collection_name, parent_collection, emptyLocMaster = True):
     # delete if exist
     if collection_name in bDat.collections:
         collection = bDat.collections[collection_name]
@@ -822,6 +825,16 @@ def create_collection(collection_name, parent_collection):
     # create a new one
     new_collection = bDat.collections.new(collection_name)
     parent_collection.children.link(new_collection)
+
+    if emptyLocMaster:
+        # create an empty axis to be parent for all objects in the collection
+        bOps.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+        empty = bCon.active_object
+        empty.name = collection_name+"_MasterLocation"
+
+        collect_to_unlink = find_collection(bCon, empty)
+        masterLocCollection.objects.link(empty)
+        collect_to_unlink.objects.unlink(empty)
 
     return new_collection
 
@@ -1031,19 +1044,54 @@ def addCylinder(collection, name, material, location, radius, height):
 
 # Create Duplicate Instance of an Object with an another name
 def createDuplicateLinkedObject(collection, originalObject, name):
-    # Créer une copie liée de l'objet original
+    # Create a linked copy of original object
     linkedObject = originalObject.copy()
     linkedObject.name = name
-    # Ajouter l'instance à la collection spécifiée
+    # Add object to collection specified
     collection.objects.link(linkedObject)
+    # Get collection name and find matching empty in masterLocCollection
+    if masterLocCollection and collection.name+"_MasterLocation" in masterLocCollection.objects:
+        parentEmpty = masterLocCollection.objects[collection.name+"_MasterLocation"]
+        linkedObject.parent = parentEmpty
+
     return linkedObject
 
 # Set color from Trackindex and TracksCount
+# Global list to store used colors
+usedColors = []
+
 def colorFromIndex(trackIndex, tracksCount):
-    colorTrack = (trackIndex + 1) / (len(tracks) + 1) # color for track
-    colorTrack = (int(colorTrack * 255) ^ 0xAA) /255 # XOR operation to get a different color
-    # hue = trackIndex / tracksCount  # Uniform hue
-    return colorTrack
+    global usedColors
+    minColorDistance = 0.1  # Minimum distance between colors (0-1)
+    
+    def colorDistance(color1, color2):
+        return abs(color1 - color2)
+    
+    def isColorValid(newColor):
+        if not usedColors:
+            return True
+        # Check distance with all used colors
+        for usedColor in usedColors:
+            if colorDistance(newColor, usedColor) < minColorDistance:
+                return False
+        return True
+    
+    # Generate color until valid
+    attempts = 0
+    maxAttempts = 50
+    while attempts < maxAttempts:
+        colorTrack = (trackIndex + 1) / (tracksCount + 1)
+        colorTrack = (int(colorTrack * 255) ^ 0xAA) / 255
+        
+        if isColorValid(colorTrack):
+            usedColors.append(colorTrack)
+            return colorTrack
+            
+        attempts += 1
+        trackIndex = (trackIndex + tracksCount//2) % tracksCount
+    
+    # Fallback if no valid color found
+    return (trackIndex + 1) / (tracksCount + 1)
 
 # Define color from note number when sharp or flat
 def colorFromNoteNumber(noteNumber):
@@ -1562,7 +1610,7 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
     listOfSelectedTrack, noteMin, noteMax, octaveCount, numberOfRenderedTracks = parseRangeFromTracks(trackMask)
 
     # Create master BG collection
-    BGCollect = create_collection("BarGraph", masterCollection)
+    BGCollect = createCollection("BarGraph", masterCollection)
 
     # Create model Cubes
     BGModelCube = addCube(hiddenCollection, "BGModelCube", matGlobalCustom, False, (0, 0, -5), (1,1,1))
@@ -1579,7 +1627,7 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
             continue
         # create collection
         BGTrackName = "BG-"+str(trackIndex)+"-"+track.name
-        BGTrackCollect = create_collection(BGTrackName, BGCollect)
+        BGTrackCollect = createCollection(BGTrackName, BGCollect)
         trackCount += 1
 
         # one cube per note used
@@ -1668,7 +1716,7 @@ def createStripNotes(masterCollection, trackMask, typeAnim):
     listOfSelectedTrack, noteMin, noteMax, octaveCount, trackProcessed = parseRangeFromTracks(trackMask)
 
     stripModelCube = addCube(hiddenCollection, "StripNotesModelCube", matGlobalCustom, False, (0, 0, -5), (1,1,1))
-    stripCollect = create_collection("StripNotes", masterCollection)
+    stripCollect = createCollection("StripNotes", masterCollection)
 
     # Evaluate the real count of track processed
     # For all tracks processed : 
@@ -1700,7 +1748,7 @@ def createStripNotes(masterCollection, trackMask, typeAnim):
         intervalY = 0 # have something else to 0 create artefact in Y depending on how many note
         
         # Create collections
-        notesCollection = create_collection("Notes-Track-"+str(trackIndex), stripCollect)
+        notesCollection = createCollection("Notes-Track-"+str(trackIndex), stripCollect)
 
         sizeX = cellSizeX
 
@@ -1839,7 +1887,7 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
     listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
 
     # Create master BG collection
-    FWCollect = create_collection("FireworksV1", masterCollection)
+    FWCollect = createCollection("FireworksV1", masterCollection)
 
     # Create model Sphere
     FWModelSphere = addIcoSphere(hiddenCollection, "BGModelCube", matGlobalCustom, (0, 0, -5), 1)
@@ -1870,7 +1918,7 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
 
         # create collection
         FWTrackName = "FW-"+str(trackIndex)+"-"+track.name
-        FWTrackCollect = create_collection(FWTrackName, FWCollect)
+        FWTrackCollect = createCollection(FWTrackName, FWCollect)
 
         # one sphere per note used
         for note in track.notesUsed:
@@ -1937,7 +1985,7 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
     listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
 
     # Create master BG collection
-    FWCollect = create_collection("FireworksV2", masterCollection)
+    FWCollect = createCollection("FireworksV2", masterCollection)
 
     # Create model objects
     FWModelEmitter = addIcoSphere(hiddenCollection, "FWV2Emitter", matGlobalCustom, (0, 0, -5), 1)
@@ -1963,7 +2011,7 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
 
         # create collection
         FWTrackName = "FW-"+str(trackIndex)+"-"+track.name
-        FWTrackCollect = create_collection(FWTrackName, FWCollect)
+        FWTrackCollect = createCollection(FWTrackName, FWCollect)
 
         # one sphere per note used
         for note in track.notesUsed:
@@ -2042,7 +2090,7 @@ def createFountain(masterCollection, trackMask, typeAnim):
     listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
 
     # Create Collection
-    fountainCollection = create_collection("Fountain", masterCollection)
+    fountainCollection = createCollection("Fountain", masterCollection)
 
     # Create model objects
     fountainModelPlane = createRectangularPlane(hiddenCollection, "fountainModelPlane", matGlobalCustom, 1, 1, (0, 0, -10))
@@ -2409,15 +2457,16 @@ Blender part
 
 # setBlenderUnits()
 purgeUnusedDatas()
-masterCollection = create_collection("MTB", bScn.collection)
-hiddenCollection = create_collection("Hidden", masterCollection)
+masterCollection = createCollection("M2B", bScn.collection, False)
+masterLocCollection = createCollection("MasterLocation", masterCollection, False)
+hiddenCollection = createCollection("Hidden", masterCollection)
 hiddenCollection.hide_viewport = True
 
 matGlobalCustom = CreateMatGlobalCustom()
 
-# createBlenderBGAnimation(masterCollection, "0-15", typeAnim="ZScale")
+# createBlenderBGAnimation(masterCollection, "8-15", typeAnim="ZScale")
 # createBlenderBGAnimation(masterCollection, "0-7", typeAnim="Light")
-# createBlenderBGAnimation(masterCollection, "0-30", typeAnim="ZScale,Light")
+createBlenderBGAnimation(masterCollection, "8-15", typeAnim="ZScale,Light")
 # createStripNotes(masterCollection, "3,9,11", typeAnim="ZScale")
 # createStripNotes(masterCollection, "0-15", typeAnim="Light")
 # createStripNotes(masterCollection, "0-15", typeAnim="ZScale,Light")
@@ -2428,7 +2477,7 @@ matGlobalCustom = CreateMatGlobalCustom()
 # createFireworksV1(masterCollection, "0-15", typeAnim="Spread,Light")
 # createFireworksV2(masterCollection, "0-15", typeAnim="Spread")
 # createFireworksV2(masterCollection, "0-15", typeAnim="Spread,Light")
-createFountain(masterCollection, "0-15", typeAnim="fountain")
+createFountain(masterCollection, "0-7", typeAnim="fountain")
     
 bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
 
