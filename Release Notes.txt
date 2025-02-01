@@ -23,6 +23,7 @@ MTB V8
             - Multicolor ?
     - Add a notion of draft and rendering version
     - Visualisation next, ideas :
+        - LightShow
         - https://www.youtube.com/watch?v=It9DOTaFA7Q&ab_channel=Polyfjord
         - Dancer
 - FIX

@@ -1169,7 +1169,7 @@ Properties Animated:
 Returns:
     None
 """
-def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
+def noteAnimate(obj, typeAnim, note, previousNote, nextNote, colorTrack):
     eventLenMove = max(1, min(math.ceil(fps * 0.1), (note.timeOff - note.timeOn) * fps // 2))
 
     frameTimeOn = int(note.timeOn * fps)
@@ -1184,8 +1184,12 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
     if frameTimeOn < frameTimeOffPrevious or frameTimeOff > frameTimeOnNext:
         return
     
+    brightness = 5 + note.velocity * 10
+
+    # List of keyframes to animate
     keyframes = []
-    
+
+    # Handle different animation types
     for animation_type in typeAnim.split(','):
         match animation_type.strip():
             case "ZScale":
@@ -1202,7 +1206,6 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
                 ])
             
             case "Light":
-                brightness = note.velocity * 10
                 adjustedVelocity = 2 * (note.velocity ** 2) if note.velocity < 0.5 else 1 - 2 * ((1 - note.velocity) ** 2)
                 velocityBlueToRed = 0.02 + (0.4 - 0.02) * adjustedVelocity
                 keyframes.extend([
@@ -1216,12 +1219,14 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
                 ])
             
             case "MultiLight":
-                brightness = 5 + note.velocity * 10
+                # If the object has an emission color from another track, average it
+                if obj["emissionColor"] > 0.01:
+                    colorTrack = (obj["emissionColor"] + colorTrack) / 2
                 keyframes.extend([
                     (frameT1, "emissionColor", colorTrack),
                     (frameT2, "emissionColor", colorTrack),
                     (frameT3, "emissionColor", colorTrack),
-                    (frameT4, "emissionColor", colorTrack),
+                    (frameT4, "emissionColor", obj["baseColor"]),
                     (frameT1, "emissionStrength", 0.0),
                     (frameT2, "emissionStrength", brightness),
                     (frameT3, "emissionStrength", brightness),
@@ -1231,8 +1236,8 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
             case "Spread":
                 posZ = note.velocity * 30
                 radius = min((frameT4 - frameT1) // 2, 5)
-                densityCloud = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densityCloud"].identifier
-                densitySeed = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
+                densityCloud = obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densityCloud"].identifier
+                densitySeed = obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
                 
                 keyframes.extend([
                     (frameT1, "location", (None, None, posZ)),
@@ -1257,173 +1262,26 @@ def noteAnimate(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
             # Handle vector properties (location, scale)
             for i, v in enumerate(value):
                 if v is not None:
-                    val = getattr(Obj, data_path) # Get vector value
+                    val = getattr(obj, data_path) # Get vector value
                     val[i] = v  # set value with index i (0=x, 1=y, 2=z)
-                    setattr(Obj, data_path, val)  # Apply change
-                    Obj.keyframe_insert(data_path=f"{data_path}", index=i, frame=frame)
+                    setattr(obj, data_path, val)  # Apply change
+                    obj.keyframe_insert(data_path=f"{data_path}", index=i, frame=frame)
         else:
             # Handle custom properties with proper data path
             if data_path in ["emissionColor", "emissionStrength"]:
-                Obj[data_path] = value
-                Obj.keyframe_insert(data_path=f'["{data_path}"]', frame=frame)
+                obj[data_path] = value
+                obj.keyframe_insert(data_path=f'["{data_path}"]', frame=frame)
             elif data_path.startswith('modifiers'):
                 # Handle modifier properties
                 modDataPath = data_path.split('.')[1]
                 modDataIndex = data_path.split('.')[2]
-                Obj.modifiers[modDataPath][modDataIndex] = value
+                obj.modifiers[modDataPath][modDataIndex] = value
                 data_path = f'modifiers["{modDataPath}"]["{modDataIndex}"]'
-                Obj.keyframe_insert(data_path=data_path, frame=frame)
+                obj.keyframe_insert(data_path=data_path, frame=frame)
             else:
                 # Handle regular properties
-                Obj[data_path] = value
-                Obj.keyframe_insert(data_path=data_path, frame=frame)
-
-
-# Affect obj with note event accordingly to typeAnim and data from note
-# index = 2 mean Z axis
-def noteAnimateOld(Obj, typeAnim, note, previousNote, nextNote, colorTrack):
-
-    eventLenMove = math.ceil(fps * 0.1) # Length (in frames) before and after event for moving to it, 10% of FPS
-
-    frameTimeOn = int(note.timeOn * fps)
-    frameTimeOff = int(note.timeOff * fps)
-    frameLength = frameTimeOff - frameTimeOn
-
-    # reevaluate note length if too short
-    if (frameTimeOff - frameTimeOn) < 3:
-        frameTimeOff = frameTimeOn + 2
-        eventLenMove = 1
-
-    # reevaluate eventLenMove length if too long
-    if (eventLenMove * 2) >= (frameTimeOff - frameTimeOn):
-        eventLenMove = int((frameTimeOff - frameTimeOn) / 2)
-
-    # Calculate the frame time off for the previous note
-    if previousNote:
-        frameTimeOffPrevious = int(previousNote.timeOff * fps)
-    else:
-        frameTimeOffPrevious = frameTimeOn
-
-    # Calculate the frame time on for the next note
-    if nextNote:
-        frameTimeOnNext = int(nextNote.timeOn * fps)
-    else:
-        frameTimeOnNext = frameTimeOff
-
-    # Exclude animation if the note is interlaced to the previous or next note
-    if frameTimeOn < frameTimeOffPrevious or frameTimeOff > frameTimeOnNext:
-        return
-
-    frameT1 = frameTimeOn
-    frameT2 = frameTimeOn + eventLenMove
-    frameT3 = frameTimeOff - eventLenMove
-    frameT4 = frameTimeOff
-
-    # Split the typeAnim string by commas to handle multiple types of animation
-    types = typeAnim.split(',')
-    for animation_type in types:
-        match animation_type.strip():  # Remove extra spaces and match each animation type
-            case "ZScale":
-                velocity = 8 * note.velocity
-                # set initial ZScale cube before acting (T1)
-                Obj.scale.z = 1
-                Obj.location.z = 0
-                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT1)  # before upscaling
-                Obj.keyframe_insert(data_path="location", index=2, frame=frameT1)
-                # Upscale cube at noteNumber on timeOn (T2)
-                Obj.scale.z = velocity
-                Obj.location.z = ((velocity - 1) / 2)
-                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT2)  # upscaling
-                Obj.keyframe_insert(data_path="location", index=2, frame=frameT2)
-                # set actual scale cube before acting (T3)
-                Obj.scale.z = velocity
-                Obj.location.z = ((velocity - 1) / 2)
-                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT3) # before downscaling
-                Obj.keyframe_insert(data_path="location", index=2, frame=frameT3)
-                # downscale cube at noteNumber on timeOff (T4)
-                Obj.scale.z = 1
-                Obj.location.z = 0
-                Obj.keyframe_insert(data_path="scale", index=2, frame=frameT4)  # downscaling
-                Obj.keyframe_insert(data_path="location", index=2, frame=frameT4)
-            case "Light": # velocity animate light from blue to red
-                brightness = note.velocity * 10 # 2 ** (velocity ** 10)
-                # Constrain velocityBlueToRed based on note.velocity
-                minValue = 0.02
-                maxValue = 0.4
-                
-                # Push values away from the median towards the edges
-                if note.velocity < 0.5:
-                    adjustedVelocity = 2 * (note.velocity ** 2)
-                else:
-                    adjustedVelocity = 1 - 2 * ((1 - note.velocity) ** 2)
-                
-                velocityBlueToRed = minValue + (maxValue - minValue) * adjustedVelocity
-                # set initial lighing before note On (T1)
-                Obj["emissionStrength"] = 0.0
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
-                # Upscale lighting on timeOn (T2)
-                Obj["emissionColor"] = velocityBlueToRed
-                Obj["emissionStrength"] = brightness
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT2)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
-                # Keep actual lighting before note Off (T3)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT3)
-                # reset ligthing to initial state on timeOff (T4)
-                Obj["emissionStrength"] = 0.0
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
-            case "MultiLight":
-                brightness = 5 + note.velocity * 10
-                # set initial lighing before note On (T1)
-                Obj["emissionColor"] = colorTrack
-                Obj["emissionStrength"] = 0.0
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT1)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
-                # Upscale lighting on timeOn (T2)
-                Obj["emissionColor"] = colorTrack
-                Obj["emissionStrength"] = brightness
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT2)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
-                # Keep actual lighting before note Off (T3)
-                Obj["emissionColor"] = colorTrack
-                Obj["emissionStrength"] = brightness
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT3)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT3)
-                # reset ligthing to initial state on timeOff (T4)
-                Obj["emissionColor"] = colorTrack
-                Obj["emissionStrength"] = 0.0
-                Obj.keyframe_insert(data_path='["emissionColor"]', frame=frameT4)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
-            case "Spread":
-                posZ = note.velocity * 30
-                radius = min(frameLength / 2, 5)
-                # set initial spread before note On (T1)
-                Obj.location.z = posZ
-                Obj.scale = (0,0,0)
-                Obj["emissionStrength"] = 0
-                Obj.keyframe_insert(data_path="location", index=2, frame=frameT1)
-                Obj.keyframe_insert(data_path="scale", frame=frameT1)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT1)
-                densityCloud = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densityCloud"].identifier
-                Obj.modifiers["SparklesCloud"][densityCloud] = note.velocity / 3
-                Obj.keyframe_insert(data_path="modifiers[\"SparklesCloud\"][\""+densityCloud+"\"]", frame=frameT1)
-                densitySeed = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
-                Obj.modifiers["SparklesCloud"][densitySeed] = random.randint(0, 1000)
-                Obj.keyframe_insert(data_path="modifiers[\"SparklesCloud\"][\""+densitySeed+"\"]", frame=frameT1)
-                # Spread on timeOn (T2)
-                Obj.scale = (radius,radius,radius)
-                Obj["emissionStrength"] = 20
-                Obj.keyframe_insert(data_path="scale", frame=frameT2)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT2)
-                # reset spread on timeOff (T4)
-                Obj.scale = (0,0,0)
-                Obj["emissionStrength"] = 0
-                Obj.keyframe_insert(data_path="scale", frame=frameT4)
-                Obj.keyframe_insert(data_path='["emissionStrength"]', frame=frameT4)
-                densitySeed = Obj.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
-                Obj.modifiers["SparklesCloud"][densitySeed] = random.randint(0, 1000)
-                Obj.keyframe_insert(data_path="modifiers[\"SparklesCloud\"][\""+densitySeed+"\"]", frame=frameT4)
-            case _:
-                wLog(f"I don't now anything about {typeAnim}")
+                obj[data_path] = value
+                obj.keyframe_insert(data_path=data_path, frame=frame)
 
 """
     Parses a range string and returns a list of numbers.
@@ -2813,7 +2671,7 @@ matGlobalCustom = CreateMatGlobalCustom()
 
 # createBlenderBGAnimation(masterCollection, "8-15", typeAnim="ZScale")
 # createBlenderBGAnimation(masterCollection, "0-7", typeAnim="Light")
-createBlenderBGAnimation(masterCollection, "3-4,7-20", typeAnim="ZScale,Light")
+createBlenderBGAnimation(masterCollection, "3-4,7-12,14-20", typeAnim="ZScale,Light")
 # createStripNotes(masterCollection, "3,9,11", typeAnim="ZScale")
 # createStripNotes(masterCollection, "0-15", typeAnim="Light")
 # createStripNotes(masterCollection, "0-15", typeAnim="ZScale,Light")
@@ -2824,7 +2682,7 @@ createBlenderBGAnimation(masterCollection, "3-4,7-20", typeAnim="ZScale,Light")
 # createFireworksV1(masterCollection, "0-15", typeAnim="Spread,Light")
 # createFireworksV2(masterCollection, "6-8", typeAnim="Spread")
 # createFireworksV2(masterCollection, "0-15", typeAnim="Spread,Light")
-createFountain(masterCollection, "0,2,5,6", typeAnim="fountain")
+createFountain(masterCollection, "0,2,5,6,13", typeAnim="fountain")
     
 bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
 
