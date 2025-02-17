@@ -14,6 +14,7 @@ M2B converts MIDI music data into various 3D animated visualizations in Blender.
   - Waterfall - Animated waterfall effect over note strips
   - Fireworks - Particle-based firework effects
   - Fountain - Fountain particle simulation
+  - Lightshow - Animated Lights
   
 - Supports multiple MIDI file formats:
   - Format 0 (single track)

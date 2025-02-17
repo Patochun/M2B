@@ -8,7 +8,7 @@ Author   : Patochun (Patrick M)
 Mail     : ptkmgr@gmail.com
 YT       : https://www.youtube.com/channel/UCCNXecgdUbUChEyvW3gFWvw
 Create   : 2024-11-11
-Version  : 8.0
+Version  : 9.0
 Compatibility : Blender 4.0 and above
 
 Licence used : GNU GPL v3
@@ -23,6 +23,7 @@ Usage : All parameters like midifile used and animation choices are hardcoded in
 import bpy
 from bpy_extras.node_shader_utils import PrincipledBSDFWrapper
 import sys
+import bmesh
 
 # Global blender objects
 bDat = bpy.data
@@ -33,14 +34,17 @@ bOps = bpy.ops
 # Global list to store used colors
 usedColors = []
 
+###############################################################################
+#                                MIDI Module                                  #
+###############################################################################
 """
 MIDI module imported from https://github.com/JacquesLucke/animation_nodes
 I was the initiator and participated in the implementation of the MIDI module in Animation Nodes
-The final code was written by OMAR Emara and slightly modified here according to my needs
+I wrote original code before the final code was written by OMAR Emara and slightly modified here according to my needs
 Additions:
     added noteMin & noteMax in track object 
     added notesUsed in track object
-    added track only if it contains notes in tracks
+    added track, only if it contains notes in tracks
     added trackIndexUsed vs trackIndex
 Directly integrated here to avoid having to manage additional python modules
 """
@@ -742,9 +746,9 @@ def readMIDIFile(path):
 End of Module MIDI for importation
 """
 
-"""
-Start of original code
-"""
+###############################################################################
+#                            Original Code                                    #
+###############################################################################
 
 # Import necessary modules
 import os  # Provides functions for interacting with the operating system
@@ -822,7 +826,7 @@ def moveToCollection(collection, obj):
     collect_to_unlink.objects.unlink(obj)
     
     # Then set parent if _MasterLocation exists
-    master_loc_name = collection.name + "_MasterLocation"
+    master_loc_name = f"{collection.name}_MasterLocation"
     if masterLocCollection and master_loc_name in masterLocCollection.objects:
         obj.parent = masterLocCollection.objects[master_loc_name]
 
@@ -854,10 +858,11 @@ def createCollection(colName, colParent, emptyLocMaster = True):
         # create an empty axis to be parent for all objects in the collection
         bOps.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
         empty = bCon.active_object
-        empty.name = colName+"_MasterLocation"
+        empty.name = f"{colName}_MasterLocation"
 
         # Check if parent collection has an empty and set parent
-        parent_empty_name = colParent.name + "_MasterLocation"
+        parent_empty_name = f"{colParent.name}_MasterLocation"
+        
         if parent_empty_name in masterLocCollection.objects:
             empty.parent = masterLocCollection.objects[parent_empty_name]
 
@@ -922,6 +927,13 @@ def createCustomAttributes(obj):
         step=0.01,  # Step size for the slider
         description="Color factor for base Color (0 to 1)"
     )
+    obj["baseSaturation"] = 1.0  # Base saturation as a float
+    obj.id_properties_ui("baseSaturation").update(
+        min=0.0,  # Minimum value
+        max=1.0,  # Maximum value
+        step=0.01,  # Step size for the slider
+        description="Saturation factor for base Color (0 to 1)"
+    )
     obj["emissionColor"] = 0.0  # Emission color as a float
     obj.id_properties_ui("emissionColor").update(
         min=0.0,  # Minimum value
@@ -946,6 +958,21 @@ def createCustomAttributes(obj):
     )
     
     return
+
+
+def parentObject(child, parent):
+    """Parent un objet à un autre en gardant la position mondiale"""
+    # Sauvegarde la position mondiale
+    # world_location = child.matrix_world.copy()
+    
+    # Définit le parent
+    child.parent = parent
+    
+    # Applique la transformation inverse du parent
+    # child.matrix_parent_inverse = parent.matrix_world.inverted()
+    
+    # Restaure la position mondiale
+    # child.matrix_world = world_location
 
 """
 Creates a Blender object with specified parameters and setup.
@@ -973,10 +1000,14 @@ from enum import Enum
 
 class BlenderObjectType(Enum):
     PLANE = "plane"
-    SPHERE = "sphere"
+    ICOSPHERE = "icosphere"
+    UVSPHERE = "uvsphere"
     CUBE = "cube"
     CYLINDER = "cylinder"
     BEZIER_CIRCLE = "bezier_circle"
+    LIGHTSHOW = "lightshow"
+    POINT = "point"
+    EMPTY = "empty"
 
 def createBlenderObject(
     objectType: BlenderObjectType,
@@ -989,7 +1020,13 @@ def createBlenderObject(
     height: float=1.0,
     width: float=1.0,
     bevel: bool=False,
-    resolution: int=12
+    resolution: int=12,
+    # UVSPHERE
+    segments: int=24,
+    rings: int=24,
+    # LIGHTSHOW
+    typeLight: str='POINT',
+
 ) -> bpy.types.Object:
     
     match objectType:
@@ -998,10 +1035,76 @@ def createBlenderObject(
             obj = bCon.active_object
             obj.scale = (width, height, 1)
             
-        case BlenderObjectType.SPHERE:
+        case BlenderObjectType.ICOSPHERE:
             bOps.mesh.primitive_ico_sphere_add(radius=radius, location=location)
             obj = bCon.active_object
             
+        # Create a UV Sphere with re-ordered vertices from 0 at north pole
+        # from top to bottom in each ring
+        # clockwise for each ring
+        case BlenderObjectType.UVSPHERE:
+
+            # Create a temporary UV Sphere
+            bOps.mesh.primitive_uv_sphere_add(
+                radius=radius, 
+                location=location,
+                segments=segments,
+                ring_count=rings
+            )
+            tempObj = bCon.active_object
+            tempObj.name = "UVSphereTemp"
+            tempMesh = tempObj.data
+
+            # Switch to edit mode to manipulate topology
+            bpy.ops.object.mode_set(mode='EDIT')
+            bm = bmesh.from_edit_mesh(tempMesh)
+
+            # Store original vertices and their positions
+            originalVertices = list(bm.verts)
+
+            # 1. Find the highest vertex (North Pole)
+            poleNorth = max(originalVertices, key=lambda v: v.co.z)
+            sortedVerts = [poleNorth]
+
+            # 2. Sort the rings from top to bottom (excluding poles)
+            uniqueZValues = sorted(set(v.co.z for v in originalVertices), reverse=True)[1:-1]
+
+            for z in uniqueZValues:
+                ringVerts = [v for v in originalVertices if v.co.z == z]
+
+                # Correctly sort vertices in each ring based on polar angle around Z
+                ringVerts.sort(key=lambda v: math.atan2(v.co.y, v.co.x))
+                
+                sortedVerts.extend(ringVerts)
+
+            # 3. Find the lowest vertex (South Pole)
+            poleSouth = min(originalVertices, key=lambda v: v.co.z)
+            sortedVerts.append(poleSouth)
+
+            # 4. Create a NEW mesh with sorted vertices
+            newMesh = bpy.data.meshes.new("UVSphereReordered")
+            obj = bpy.data.objects.new("UVSphereReordered", newMesh)
+            bpy.context.collection.objects.link(obj)
+
+            # Convert sorted vertices into a list of positions
+            newVertices = [v.co for v in sortedVerts]
+
+            # Reconstruct faces using original topology
+            oldFaces = [[originalVertices.index(v) for v in f.verts] for f in bm.faces]
+            newFaces = [[sortedVerts.index(originalVertices[idx]) for idx in face] for face in oldFaces]
+
+            # Add data to the new mesh
+            newMesh.from_pydata(newVertices, [], newFaces)
+            newMesh.update()
+
+            # Remove the old object
+            bpy.data.objects.remove(tempObj)
+
+            # Select the new object
+            bpy.context.view_layer.objects.active = obj
+            # obj.select_set(True)
+            obj = bCon.active_object
+
         case BlenderObjectType.CUBE:
             bOps.mesh.primitive_cube_add(size=1, location=location)
             obj = bCon.active_object
@@ -1019,6 +1122,133 @@ def createBlenderObject(
             bOps.curve.primitive_bezier_circle_add(location=location, radius=radius)
             obj = bCon.active_object
             obj.data.resolution_u = resolution
+            
+        case BlenderObjectType.POINT:
+            bOps.object.light_add(type=typeLight, location=location)
+            obj = bCon.active_object
+
+            # Get the Light data
+            objData = obj.data
+            objData.energy = 20000
+            objData.shadow_soft_size = radius  # Radius of the light source
+            objData.color = (1.0,1.0,1.0)
+
+        case BlenderObjectType.LIGHTSHOW:
+            bOps.object.light_add(type=typeLight, location=location)
+            obj = bCon.active_object
+
+            # Get the Light data
+            objData = obj.data
+            objData.energy = 1
+            objData.shadow_soft_size = radius  # Radius of the light source
+            objData.color = (1.0,1.0,1.0)
+            objData.use_nodes = True  # Enable shader nodes
+
+            # Access the node tree
+            nodeTree = objData.node_tree
+            nodes = nodeTree.nodes
+            links = nodeTree.links
+
+            # Remove existing nodes
+            for node in nodes:
+                nodes.remove(node)
+
+            # Add ColorRamp Emission node
+            colorRampEmission = nodes.new(type="ShaderNodeValToRGB")
+            colorRampEmission.location = (-400, 0)
+            colorRampEmission.color_ramp.color_mode = 'HSV'
+            colorRampEmission.color_ramp.interpolation = 'CARDINAL'  # Ensure cardinal interpolation
+            colorRampEmission.color_ramp.elements.new(0.01)  # Add a stop at 0.01
+            colorRampEmission.color_ramp.elements.new(0.02)  # Add a stop at 0.02
+            colorRampEmission.color_ramp.elements.new(0.40)  # Add a stop at 0.40
+            colorRampEmission.color_ramp.elements.new(0.60)  # Add a stop at 0.60
+            colorRampEmission.color_ramp.elements.new(0.80)  # Add a stop at 0.80
+            colorRampEmission.color_ramp.elements[0].color = (0, 0, 0, 1)  # Black 0.0
+            colorRampEmission.color_ramp.elements[1].color = (1, 1, 1, 1)  # White 0.01
+            colorRampEmission.color_ramp.elements[2].color = (0, 0, 1, 1)  # Blue 0.02
+            colorRampEmission.color_ramp.elements[3].color = (1, 0, 0, 1)  # Red 0.4
+            colorRampEmission.color_ramp.elements[4].color = (1, 1, 0, 1)  # Yellow 0.6
+            colorRampEmission.color_ramp.elements[5].color = (0, 1, 0, 1)  # Green 0.8
+            colorRampEmission.color_ramp.elements[6].color = (0, 1, 1, 1)  # Cyan 1.0
+
+            # Add Texture Coordinate node before Voronoi
+            texCoord = nodes.new(type='ShaderNodeTexCoord')
+            texCoord.location = (-800, -200)  # Position before Voronoi
+
+            # Add Voronoi Texture node
+            voronoiTexture = nodes.new(type='ShaderNodeTexVoronoi')
+            voronoiTexture.location = (-600, -200)  # Position before ColorRampTexture
+            voronoiTexture.inputs['Scale'].default_value = 10
+            # voronoiTexture.inputs['W'].default_value = 0
+            voronoiTexture.inputs['Roughness'].default_value = 0
+            voronoiTexture.inputs['Randomness'].default_value = 0
+
+            # Add ColorRamp Texture node
+            colorRampTexture = nodes.new(type="ShaderNodeValToRGB")
+            colorRampTexture.location = (-400, -200)
+            colorRampTexture.color_ramp.color_mode = 'RGB'
+            colorRampTexture.color_ramp.interpolation = 'LINEAR'  # Ensure linear interpolation
+            colorRampTexture.color_ramp.elements[0].position = 0.4  # Black
+            colorRampTexture.color_ramp.elements[0].color = (0, 0, 0, 1)
+            colorRampTexture.color_ramp.elements[1].position = 0.5  # White
+            colorRampTexture.color_ramp.elements[1].color = (1, 1, 1, 1)
+
+            # Add Mix Color node
+            mixColor = nodes.new(type='ShaderNodeMixRGB')
+            mixColor.location = (-100, -100)  # Position between the two ColorRamps
+            mixColor.blend_type = 'DIVIDE'
+            mixColor.inputs[0].default_value = 0.5  # Set mix factor to 0.5            
+
+            # Add Emission node
+            emissionNode = nodes.new(type="ShaderNodeEmission")
+            emissionNode.location = (100, 0)
+
+            # Add Output Light node
+            outputNode = nodes.new(type="ShaderNodeOutputLight")
+            outputNode.location = (300, 0)
+
+            # Link nodes
+            links.new(colorRampEmission.outputs[0], mixColor.inputs[1])
+            links.new(texCoord.outputs["Normal"], voronoiTexture.inputs["Vector"])
+            links.new(voronoiTexture.outputs[0], colorRampTexture.inputs[0])
+            links.new(colorRampTexture.outputs[0], mixColor.inputs[2])
+            links.new(mixColor.outputs[0], emissionNode.inputs["Color"])  # Connect Mix to Emission color
+            links.new(emissionNode.outputs["Emission"], outputNode.inputs["Surface"])  # Emission → Output
+
+            # Add driver for emission strength
+            driver = emissionNode.inputs["Strength"].driver_add("default_value").driver
+            driver.type = 'SCRIPTED'
+            
+            # Add variable for emission strength
+            var = driver.variables.new()
+            var.name = "emissionStrength"
+            var.type = 'SINGLE_PROP'
+            var.targets[0].id = obj  # Reference to light object
+            var.targets[0].data_path = '["emissionStrength"]'
+            
+            # Set driver expression
+            driver.expression = "emissionStrength"
+
+            # Add driver for ColorRamp fac input
+            driver = colorRampEmission.inputs[0].driver_add('default_value').driver
+            driver.type = 'SCRIPTED'
+            
+            # Add variable for emission color
+            var = driver.variables.new()
+            var.name = "emissionColor"
+            var.type = 'SINGLE_PROP'
+            var.targets[0].id = obj
+            var.targets[0].data_path = '["emissionColor"]'
+            
+            # Set driver expression
+            driver.expression = "emissionColor"
+            
+        case BlenderObjectType.EMPTY:
+            bOps.object.empty_add(type='PLAIN_AXES', location=location)
+            obj = bCon.active_object
+            obj.name = name
+            obj.empty_display_size = 2.0
+            obj.empty_display_type = 'PLAIN_AXES'
 
     # Common setup
     obj.name = name
@@ -1051,11 +1281,18 @@ Usage:
     )
 """
 # Create Duplicate Instance of an Object with an another name
-def createDuplicateLinkedObject(collection, originalObject, name):
-    # Create a linked copy of original object
-    linkedObject = originalObject.copy()
-    linkedObject.name = name
-    # Add object to collection specified
+# Independant = True : Create a new object with new mesh
+# Independant = False : Create a new object with same mesh
+def createDuplicateLinkedObject(collection, originalObject, name, independant=False):
+    if independant:
+        linkedObject = originalObject.copy()
+        linkedObject.data = originalObject.data.copy()
+        linkedObject.animation_data_clear()
+        linkedObject.name = name
+    else:
+        linkedObject = originalObject.copy()
+        linkedObject.name = name
+
     collection.objects.link(linkedObject)
     # Get collection name and find matching empty in masterLocCollection
     if masterLocCollection and collection.name+"_MasterLocation" in masterLocCollection.objects:
@@ -1117,7 +1354,7 @@ def generateHSVColors(nSeries):
         saturation = 0.8    # Saturation high for vibrant color
         value = 0.9         # High luminosity
         r,g,b = colorsys.hsv_to_rgb(hue, saturation, value)
-        colors.append((r,g,b, 1.0))
+        colors.append((r,g,b))
     return colors
 
 def clamp(value, min_val, max_val):
@@ -1169,7 +1406,24 @@ Properties Animated:
 Returns:
     None
 """
-def noteAnimate(obj, typeAnim, note, previousNote, nextNote, colorTrack):
+def noteAnimate(obj, typeAnim, track, noteIndex, colorTrack):
+
+    note = track.notes[noteIndex]
+
+    # Find the previous note with the same note number
+    previousNote = None
+    for prevIndex in range(noteIndex - 1, -1, -1):
+        if track.notes[prevIndex].noteNumber == note.noteNumber:
+            previousNote = track.notes[prevIndex]
+            break
+
+    # Find the next note with the same note number
+    nextNote = None
+    for nextIndex in range(noteIndex + 1, len(track.notes)):
+        if track.notes[nextIndex].noteNumber == note.noteNumber:
+            nextNote = track.notes[nextIndex]
+            break
+
     eventLenMove = max(1, min(math.ceil(fps * 0.1), (note.timeOff - note.timeOn) * fps // 2))
 
     frameTimeOn = int(note.timeOn * fps)
@@ -1184,7 +1438,8 @@ def noteAnimate(obj, typeAnim, note, previousNote, nextNote, colorTrack):
     if frameTimeOn < frameTimeOffPrevious or frameTimeOff > frameTimeOnNext:
         return
     
-    brightness = 5 + note.velocity * 10
+    # Transform linear velocity (0-1) into sinusoidal brightness curve
+    brightness = 5 + (math.sin(note.velocity * math.pi/2) * 10)
 
     # List of keyframes to animate
     keyframes = []
@@ -1226,6 +1481,7 @@ def noteAnimate(obj, typeAnim, note, previousNote, nextNote, colorTrack):
                     (frameT1, "emissionColor", colorTrack),
                     (frameT2, "emissionColor", colorTrack),
                     (frameT3, "emissionColor", colorTrack),
+                    (frameT4, "emissionColor", colorTrack),
                     (frameT4, "emissionColor", obj["baseColor"]),
                     (frameT1, "emissionStrength", 0.0),
                     (frameT2, "emissionStrength", brightness),
@@ -1291,6 +1547,40 @@ def noteAnimate(obj, typeAnim, note, previousNote, nextNote, colorTrack):
 """
 def parseRangeFromTracks(rangeStr):
 
+    def max_gap_values(n, start=0.02, end=1):
+        """
+        Returns a list of n values between start and end,
+        arranged so that the gap between consecutive values is maximized.
+        The output list is not in ascending order.
+        """
+        if n < 1:
+            raise ValueError("n must be a positive integer")
+        if n == 1:
+            return [(start + end) / 2]  # Return the mid value if only one element is needed
+
+        # Generate n equally spaced values between start and end
+        step = (end - start) / (n - 1)
+        sorted_values = [start + i * step for i in range(n)]
+
+        # Reorder the list to maximize differences between consecutive values
+        result = []
+        # Start with the middle element
+        mid_index = len(sorted_values) // 2
+        result.append(sorted_values.pop(mid_index))
+
+        # Alternate: take successivement le plus petit et le plus grand élément restant
+        toggle = True
+        while sorted_values:
+            if toggle:
+                result.append(sorted_values.pop(0))
+            else:
+                result.append(sorted_values.pop(-1))
+            toggle = not toggle
+
+        return result
+
+    wLog(f"Track filter used = {rangeStr}")
+
     numbers = []
     # Divide string in individuals parts
     segments = rangeStr.split(',')
@@ -1305,23 +1595,29 @@ def parseRangeFromTracks(rangeStr):
         else:
             raise ValueError(f"Invalid format : {segment}")
 
-    wLog(f"Track filter used = {numbers}")
-
     # Evaluate noteMin, noteMax and octaveCount from effective range
     noteMin = 1000
     noteMax = 0
     effectiveTrackCount = 0
+    tracksSelected = ""
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in numbers:
             continue
         
         effectiveTrackCount += 1
+        tracksSelected += (f"{trackIndex},")
         noteMin = min(noteMin, track.minNote)
         noteMax = max(noteMax, track.maxNote)
 
+    tracksSelected = tracksSelected[:-1]  # Remove last ,
+    wLog(f"Track selected are = {tracksSelected}")
+
     octaveCount = (noteMax // 12) - (noteMin // 12) + 1
 
-    return numbers, noteMin, noteMax, octaveCount, effectiveTrackCount
+    # Create a table of color
+    tracksColor = max_gap_values(effectiveTrackCount, start=0.02, end=1)
+
+    return numbers, noteMin, noteMax, octaveCount, effectiveTrackCount, tracksColor
 
 """
 Creates a global custom material with color ramps and emission control
@@ -1371,12 +1667,17 @@ def CreateMatGlobalCustom():
     output.location = (600, 0)
 
     principledBSDF = nodes.new(type="ShaderNodeBsdfPrincipled")
-    principledBSDF.location = (200, 0)
+    principledBSDF.location = (400, 0)
 
     attributeBaseColor = nodes.new(type="ShaderNodeAttribute")
     attributeBaseColor.location = (-400, 100)
     attributeBaseColor.attribute_name = "baseColor"
     attributeBaseColor.attribute_type = 'OBJECT'
+
+    attributeBaseSat = nodes.new(type="ShaderNodeAttribute")
+    attributeBaseSat.location = (-400, 300)
+    attributeBaseSat.attribute_name = "baseSaturation"
+    attributeBaseSat.attribute_type = 'OBJECT'
 
     colorRampBase = nodes.new(type="ShaderNodeValToRGB")
     colorRampBase.location = (-200, 100)
@@ -1394,6 +1695,11 @@ def CreateMatGlobalCustom():
     colorRampBase.color_ramp.elements[4].color = (1, 1, 0, 1)  # Yellow 0.6
     colorRampBase.color_ramp.elements[5].color = (0, 1, 0, 1)  # Green 0.8
     colorRampBase.color_ramp.elements[6].color = (0, 1, 1, 1)  # Cyan 1.0
+
+    mixColorBase = nodes.new(type='ShaderNodeMixRGB')
+    mixColorBase.location = (0, 200)
+    mixColorBase.blend_type = 'COLOR'
+    mixColorBase.inputs[2].default_value = (0.0, 0.0, 0.0, 1)
 
     attributeEmissionStrength = nodes.new(type="ShaderNodeAttribute")
     attributeEmissionStrength.location = (-400, -300)
@@ -1432,9 +1738,14 @@ def CreateMatGlobalCustom():
     links.new(attributeEmissionStrength.outputs["Fac"], principledBSDF.inputs["Emission Strength"])  # Emission strength
     links.new(attributeAlpha.outputs["Fac"], principledBSDF.inputs["Alpha"])  # Emission strength
     links.new(attributeEmissionColor.outputs["Fac"], colorRampEmission.inputs["Fac"])  # Emission color
-    links.new(colorRampBase.outputs["Color"], principledBSDF.inputs["Base Color"])  # Base color
+    links.new(colorRampBase.outputs["Color"], mixColorBase.inputs[2])   # Original color
+    links.new(attributeBaseSat.outputs["Fac"], mixColorBase.inputs[0])  # Factor from baseSaturation
+    links.new(mixColorBase.outputs["Color"], principledBSDF.inputs["Base Color"])  # Output to shader
     links.new(colorRampEmission.outputs["Color"], principledBSDF.inputs["Emission Color"])  # Emission color
     links.new(principledBSDF.outputs["BSDF"], output.inputs["Surface"])  # Output surface
+
+ 
+
 
     return mat
 
@@ -1632,6 +1943,76 @@ def extractOctaveAndNote(note):
     return octave, noteNumber
 
 """
+Distributes objects evenly along a Bezier curve using Clamp To constraints.
+
+Args:
+    listObj (list): List of objects to distribute along the curve
+    curve (bpy.types.Object): Target Bezier curve object
+    
+The function:
+- Calculates even spacing between objects
+- Adds Clamp To constraint to each object
+- Sets initial positions proportionally along curve
+- Maintains dynamic curve following with influence=1
+
+Note:
+    Objects will be clamped to curve while maintaining even distribution
+    Positioning uses curve dimensions for initial placement
+    Constraint influence is set to 1 to maintain curve following
+"""
+def distributeObjectsWithClampTo(listObj: list, curve: bpy.types.Object):
+    numObjects = len(listObj)
+
+    # Adjust factor based on number of objects
+    # 0.275 is calibrated for 4 objects, so I assume 1.1 is the all cake
+    baseFactor = curve.dimensions.x + 2
+    factor = baseFactor / numObjects
+
+    for i, obj in enumerate(listObj):
+
+        # Compute initial position before applying Clamp To
+        obj.location.x = factor * (i+1)
+
+        # Apply the Clamp To modifier
+        clampMod = obj.constraints.new(type='CLAMP_TO')
+        clampMod.target = curve
+        clampMod.use_cyclic = True
+        clampMod.main_axis = 'CLAMPTO_X'
+        clampMod.influence = 1.0
+
+"""
+Animate rotation of a curve based on rotation speed and note duration.
+
+Args:
+    curve (bpy.types.Object): Curve object to animate
+    rotationSpeed (float): Rotations per second
+
+Note:
+    Uses global lastNoteTimeOff and fps variables
+    Creates linear animation from start to end
+"""
+def animCircleCurve(curve, rotationSpeed):
+    # Animate circle curve with rotationSpeed = Rotations per second
+    startFrame = 1
+    endFrame = int(lastNoteTimeOff * fps)  # Use global lastNoteTimeOff
+    totalRotations = rotationSpeed * lastNoteTimeOff
+
+    # Set keyframes for Z rotation
+    curve.rotation_euler.z = 0
+    curve.keyframe_insert(data_path="rotation_euler", index=2, frame=startFrame)
+
+    curve.rotation_euler.z = totalRotations * 2 * math.pi  # Convert to radians
+    curve.keyframe_insert(data_path="rotation_euler", index=2, frame=endFrame)
+
+    # Make animation linear
+    for fcurve in curve.animation_data.action.fcurves:
+        for keyframe in fcurve.keyframe_points:
+            keyframe.interpolation = 'LINEAR'
+
+###############################################################################
+#                            Animations Part                                  #
+###############################################################################
+"""
 Creates a bar graph visualization for MIDI tracks in Blender.
 
 This function creates a 3D bar graph visualization where:
@@ -1663,7 +2044,7 @@ Usage:
 def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
     wLog(f"Create a BarGraph Animation type = {typeAnim}")
 
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, numberOfRenderedTracks = parseRangeFromTracks(trackMask)
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, numberOfRenderedTracks, tracksColor = parseRangeFromTracks(trackMask)
 
     # Create master BG collection
     BGCollect = createCollection("BarGraph", masterCollection)
@@ -1711,7 +2092,7 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
             cubeName = f"Cube-{trackIndex}-{note}"
             offsetX = (note - noteMidRange) * cubeSpace
             offsetY = (trackCount - trackCenter - 1) * cubeSpace + cubeSpace / 2
-            cubeLinked = createDuplicateLinkedObject(BGTrackCollect, BGModelCube, cubeName)
+            cubeLinked = createDuplicateLinkedObject(BGTrackCollect, BGModelCube, cubeName, independant=False)
             cubeLinked.location = (offsetX, offsetY, 0)
             cubeLinked["baseColor"] = colorFromNoteNumber(note % 12)
                 
@@ -1731,9 +2112,9 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
         planPosX = (octave - (noteMidRange // 12)) * 12 * cubeSpace
         planPosX -= planPosXOffset
         planeName = f"Plane-{octave}"
-        obj = createDuplicateLinkedObject(BGPlaneCollect, BGModelPlane, planeName)
+        obj = createDuplicateLinkedObject(BGPlaneCollect, BGModelPlane, planeName, independant=False)
         obj.scale = (planSizeX, planSizeY, 1)
-        obj.location = (planPosX, 0, (-BGModelCube.scale.z / 2)*1.05)
+        obj.location = (planPosX, 0, (-BGModelCube.scale.z / 2)*1.005)
         if octave % 2 == 0:
             obj["baseColor"] = 0.6 # Yellow
         else: 
@@ -1746,27 +2127,13 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
 
         colorTrack = colorFromIndex(trackIndex, numberOfRenderedTracks)
 
-        for currentIndex, note in enumerate(track.notes):
-            # Find the previous note with the same note number
-            previousNote = None
-            for prevIndex in range(currentIndex - 1, -1, -1):
-                if track.notes[prevIndex].noteNumber == note.noteNumber:
-                    previousNote = track.notes[prevIndex]
-                    break
-
-            # Find the next note with the same note number
-            nextNote = None
-            for nextIndex in range(currentIndex + 1, len(track.notes)):
-                if track.notes[nextIndex].noteNumber == note.noteNumber:
-                    nextNote = track.notes[nextIndex]
-                    break
-
+        for noteIndex, note in enumerate(track.notes):
             # Construct the cube name and animate
             cubeName = f"Cube-{trackIndex}-{note.noteNumber}"
             noteObj = bDat.objects[cubeName]
-            noteAnimate(noteObj, typeAnim, note, previousNote, nextNote, colorTrack)
+            noteAnimate(noteObj, typeAnim, track, noteIndex, colorTrack)
 
-        wLog(f"BarGraph - Animate cubes for track {trackIndex} (notesCount) ({len(track.notes)})")
+        wLog(f"BarGraph - Animate cubes for track {trackIndex} (notesCount) ({noteIndex})")
         
     return
 
@@ -1801,7 +2168,7 @@ def createStripNotes(masterCollection, trackMask, typeAnim):
 
     wLog(f"Create a Strip Notes Animation type = {typeAnim}")
 
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, trackProcessed = parseRangeFromTracks(trackMask)
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, trackProcessed, tracksColor = parseRangeFromTracks(trackMask)
 
     # Create models Object
     stripModelCube = createBlenderObject(
@@ -1814,16 +2181,18 @@ def createStripNotes(masterCollection, trackMask, typeAnim):
         bevel=False
     )
 
-    stripCollect = createCollection("StripNotes", masterCollection)
+    stripModelPlane = createBlenderObject(
+        BlenderObjectType.PLANE,
+        collection=hiddenCollection,
+        name="StripBGModelPlane",
+        material=matGlobalCustom,
+        location=(0, 0, -10),
+        width=1,
+        height=1
+    )
 
-    # Evaluate the real count of track processed
-    # For all tracks processed : 
-    # - length in sec
-    length = 0
-    for trackIndex, track in enumerate(tracks):
-        if trackIndex not in listOfSelectedTrack:
-            continue
-        length = max(length, track.notes[-1].timeOff)
+
+    stripCollect = createCollection("StripNotes", masterCollection)
 
     notecount = (noteMax - noteMin) + 1
     noteMiddle = noteMin + math.ceil(notecount / 2)
@@ -1833,71 +2202,62 @@ def createStripNotes(masterCollection, trackMask, typeAnim):
     cellSizeX = 1 # size X for each note in centimeters
     cellSizeY = 4 # size for each second in centimeters
     intervalX = cellSizeX / 10
-    intervalTracks = (cellSizeX + intervalX) * (trackProcessed - 1)
-    planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + (notecount * intervalTracks)
-    planSizeY = (length + (marginExtY *2)) * cellSizeY
+    intervalTracks = (cellSizeX + intervalX) * (trackProcessed)
 
     # Parse tracks
+    length = 0
+    trackCount = 0
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        offSetX = (trackIndex * (cellSizeX + intervalX))
+        length = max(length, track.notes[-1].timeOff)
+        trackCount += 1
+
+        offSetX = ((trackCount-1) * (cellSizeX + intervalX))
         intervalY = 0 # have something else to 0 create artefact in Y depending on how many note
         
         # Create collections
-        notesCollection = createCollection(f"Notes-Track-{trackIndex}", stripCollect)
+        notesCollection = createCollection(f"Notes-Track-{trackCount}", stripCollect)
 
         sizeX = cellSizeX
 
-        colorTrack = colorFromIndex(trackIndex, trackProcessed)
-
         for noteIndex, note in enumerate(track.notes):
-            posX = ((note.noteNumber - noteMiddle) * (cellSizeX + intervalTracks)) + offSetX + (sizeX / 2)
+            posX = ((note.noteNumber - noteMiddle) * (intervalTracks)) + offSetX # - (sizeX / 2)
             sizeY = round(((note.timeOff - note.timeOn) * cellSizeY),2)
             posY = ((marginExtY + note.timeOn) * (cellSizeY + intervalY)) + (sizeY / 2)
-            nameOfNotePlayed = f"Note-{trackIndex}-{noteIndex}"
+            nameOfNotePlayed = f"Note-{trackCount}-{note.noteNumber}-{noteIndex}"
 
             # Duplicate the existing note
-            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube, nameOfNotePlayed)
+            noteObj = createDuplicateLinkedObject(notesCollection, stripModelCube, nameOfNotePlayed, independant=False)
             noteObj.location = (posX, posY, 0) # Set instance position
             noteObj.scale = (sizeX, sizeY, 1) # Set instance scale
-            noteObj["baseColor"] = colorTrack
-
-            # Find the previous note with the same note number
-            previousNote = None
-            for prevIndex in range(noteIndex - 1, -1, -1):
-                if track.notes[prevIndex].noteNumber == note.noteNumber:
-                    previousNote = track.notes[prevIndex]
-                    break
-
-            # Find the next note with the same note number
-            nextNote = None
-            for nextIndex in range(noteIndex + 1, len(track.notes)):
-                if track.notes[nextIndex].noteNumber == note.noteNumber:
-                    nextNote = track.notes[nextIndex]
-                    break
+            noteObj["baseColor"] = tracksColor[trackCount-1]
 
             # Animate note
             # Be aware to animate duplicate only, never the model one
             # Pass the current note, previous note, and next note to the function
-            noteAnimate(noteObj, typeAnim, note, previousNote, nextNote, colorTrack)
+            noteAnimate(noteObj, typeAnim, track, noteIndex, tracksColor[trackCount-1])
             
-        wLog(f"Notes Strip track {trackIndex} - create & animate {noteIndex + 1}")
+        wLog(f"Notes Strip track {trackCount} - create & animate {noteIndex + 1}")
 
     # Create background plane
-    obj = createBlenderObject(
-        BlenderObjectType.PLANE,
-        collection=stripCollect,
-        name="NotesStripPlane",
-        material=matGlobalCustom,
-        location=(0, planSizeY / 2, (-stripModelCube.scale.z / 2)*1.05),
-        width=planSizeX,
-        height=planSizeY
-    )
-    obj["baseColor"] = 0.01 # White
+    planSizeX = (marginExtX * 2) + (notecount * cellSizeX) + (notecount * intervalTracks)
+    planSizeY = (length + (marginExtY *2)) * cellSizeY
 
-    return obj
+    for noteNum in range(noteMin, noteMax + 1):
+        planeName = (f"{noteNum}-BG")
+        planeObj = createDuplicateLinkedObject(stripCollect, stripModelPlane, planeName, independant=False)
+        planeObj.scale = (intervalTracks, planSizeY, 1)
+        planeObj.location = (((noteNum - noteMiddle) * intervalTracks) + intervalTracks / 2 - cellSizeX / 2, planSizeY / 2, (-stripModelCube.scale.z / 2))
+        octave, note = extractOctaveAndNote(noteNum)
+        color = 0.400 + colorFromNoteNumber(noteNum % 12) * 4
+        if octave % 2 == 0:
+            color += 0.1
+        planeObj["baseColor"] = color
+        planeObj["baseSaturation"] = 0.4
+
+    return
 
 """
 Creates a waterfall visualization of MIDI notes with animated camera movement.
@@ -1929,7 +2289,7 @@ def createWaterFall(masterCollection, trackMask, typeAnim):
 
     createStripNotes(masterCollection, trackMask, typeAnim)
 
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, tracksProcessed, tracksColor = parseRangeFromTracks(trackMask)
 
     # Initialize a list to store all notes from the selected tracks along with their track index
     selectedNotes = []
@@ -2028,14 +2388,14 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
 
     wLog(f"Create a Fireworks V1 Notes Animation type = {typeAnim}")
 
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, tracksProcessed, tracksColor = parseRangeFromTracks(trackMask)
 
     # Create master BG collection
     FWCollect = createCollection("FireworksV1", masterCollection)
 
     # Create model Sphere
     FWModelSphere = createBlenderObject(
-        BlenderObjectType.SPHERE,
+        BlenderObjectType.ICOSPHERE,
         collection=hiddenCollection,
         name="FWModelSphere",
         material=matGlobalCustom,
@@ -2061,11 +2421,12 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
 
     # Construction
     noteCount = 0
+    trackCount = 0
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        colorTrack = colorFromIndex(trackIndex, len(tracks))
+        trackCount += 1
 
         # create collection
         FWTrackName = f"FW-{trackIndex}-{track.name}"
@@ -2076,11 +2437,11 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
             noteCount += 1
             # create sphere
             sphereName = f"Sphere-{trackIndex}-{note}"
-            sphereLinked = createDuplicateLinkedObject(FWTrackCollect, FWModelSphere, sphereName)
+            sphereLinked = createDuplicateLinkedObject(FWTrackCollect, FWModelSphere, sphereName, independant=False)
             sphereLinked.location = ((note % 12) * spaceX - offsetX, (note // 12) * spaceY - offsetY, 0)
             sphereLinked.scale = (0,0,0)
-            sphereLinked["baseColor"] = colorTrack
-            sphereLinked["emissionColor"] = colorTrack
+            sphereLinked["baseColor"] = tracksColor[trackCount-1]
+            sphereLinked["emissionColor"] = tracksColor[trackCount-1]
             sparkleCloudSeed = sphereLinked.modifiers["SparklesCloud"].node_group.interface.items_tree["densitySeed"].identifier
             sphereLinked.modifiers["SparklesCloud"][sparkleCloudSeed] = noteCount
 
@@ -2091,29 +2452,13 @@ def createFireworksV1(masterCollection, trackMask, typeAnim):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        colorTrack = colorFromIndex(trackIndex, len(tracks))
-
-        for currentIndex, note in enumerate(track.notes):
-            # Find the previous note with the same note number
-            previousNote = None
-            for prevIndex in range(currentIndex - 1, -1, -1):
-                if track.notes[prevIndex].noteNumber == note.noteNumber:
-                    previousNote = track.notes[prevIndex]
-                    break
-
-            # Find the next note with the same note number
-            nextNote = None
-            for nextIndex in range(currentIndex + 1, len(track.notes)):
-                if track.notes[nextIndex].noteNumber == note.noteNumber:
-                    nextNote = track.notes[nextIndex]
-                    break
-
+        for noteIndex, note in enumerate(track.notes):
             # Construct the sphere name and animate
             objName = f"Sphere-{trackIndex}-{note.noteNumber}"
             noteObj = bDat.objects[objName]
-            noteAnimate(noteObj, typeAnim, note, previousNote, nextNote, colorTrack)
+            noteAnimate(noteObj, typeAnim, track, noteIndex, tracksColor[trackCount-1])
 
-        wLog(f"Fireworks - Animate sparkles cloud for track {trackIndex} (notesCount) ({len(track.notes)})")
+        wLog(f"Fireworks - Animate sparkles cloud for track {trackIndex} (notesCount) ({noteIndex})")
 
     return
 
@@ -2158,14 +2503,14 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
 
     wLog(f"Create a Fireworks V2 Notes Animation type = {typeAnim}")
 
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, tracksProcessed, tracksColor = parseRangeFromTracks(trackMask)
 
     # Create master BG collection
     FWCollect = createCollection("FireworksV2", masterCollection)
 
     # Create model objects
     FWModelEmitter = createBlenderObject(
-        BlenderObjectType.SPHERE,
+        BlenderObjectType.ICOSPHERE,
         collection=hiddenCollection,
         name="FWV2Emitter",
         material=matGlobalCustom,
@@ -2174,7 +2519,7 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
     )
 
     FWModelSparkle = createBlenderObject(
-        BlenderObjectType.SPHERE,
+        BlenderObjectType.ICOSPHERE,
         collection=hiddenCollection,
         name="FWV2Sparkles",
         material=matGlobalCustom,
@@ -2193,12 +2538,15 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
 
     # Construction
     noteCount = 0
+    trackCount = 0
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        colorTrack = (trackIndex + 1) / (len(tracks) + 1) # color for track
-        colorTrack = (int(colorTrack * 255) ^ 0xAA) /255 # XOR operation to get a different color
+        # colorTrack = (trackIndex + 1) / (len(tracks) + 1) # color for track
+        # colorTrack = (int(colorTrack * 255) ^ 0xAA) /255 # XOR operation to get a different color
+        
+        trackCount += 1
 
         # create collection
         FWTrackName = f"FW-{trackIndex}-{track.name}"
@@ -2211,22 +2559,22 @@ def createFireworksV2(masterCollection, trackMask, typeAnim):
             pY = ((note // 12) - octaveCenter) * spaceY
             pZ = (trackIndex - trackCenter) * spaceZ
             emitterName = f"noteEmitter-{trackIndex}-{note}"
-            sphereLinked = createDuplicateLinkedObject(FWTrackCollect, FWModelEmitter, emitterName)
+            sphereLinked = createDuplicateLinkedObject(FWTrackCollect, FWModelEmitter, emitterName, independant=False)
             sphereLinked.location = (pX, pY, pZ)
             sphereLinked.scale = (1,1,1)
             sphereLinked["alpha"] = 0.0
             sparkleName = f"noteSparkles-{trackIndex}-{note}"
-            sphereLinked = createDuplicateLinkedObject(hiddenCollection, FWModelSparkle, sparkleName)
+            sphereLinked = createDuplicateLinkedObject(hiddenCollection, FWModelSparkle, sparkleName, independant=False)
             sphereLinked.location = (pX, pY, pZ)
             sphereLinked.scale = (1,1,1)
-            sphereLinked["baseColor"] = colorTrack
-            sphereLinked["emissionColor"] = colorTrack
+            sphereLinked["baseColor"] = tracksColor[trackCount-1]
+            sphereLinked["emissionColor"] = tracksColor[trackCount-1]
 
         wLog(f"Fireworks V2 - create {len(track.notesUsed)} sparkles cloud for track {trackIndex} (range noteMin-noteMax) ({track.minNote}-{track.maxNote})")
 
         # create animation
         noteCount = 0
-        for currentIndex, note in enumerate(track.notes):
+        for noteIndex, note in enumerate(track.notes):
             noteCount += 1
             
             frameTimeOn = int(note.timeOn * fps)
@@ -2309,7 +2657,7 @@ def createFountain(masterCollection, trackMask, typeAnim):
 
     wLog(f"Create a Fountain Notes Animation type = {typeAnim}")
 
-    listOfSelectedTrack, noteMin, noteMax, octaveCount, tacksProcessed = parseRangeFromTracks(trackMask)
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, tracksProcessed, tracksColor = parseRangeFromTracks(trackMask)
 
     # Create Collection
     fountainCollection = createCollection("Fountain", masterCollection)
@@ -2354,7 +2702,7 @@ def createFountain(masterCollection, trackMask, typeAnim):
     for note in range(132):
         octave, numNote = extractOctaveAndNote(note)
         targetName = f"Target-{numNote}-{octave}"
-        targetObj = createDuplicateLinkedObject(fountainTargetCollection, fountainModelPlane, targetName)
+        targetObj = createDuplicateLinkedObject(fountainTargetCollection, fountainModelPlane, targetName, independant=False)
         spaceY = 0.1
         spaceX = 0.1
         angle = (12 - note) * alpha
@@ -2383,34 +2731,6 @@ def createFountain(masterCollection, trackMask, typeAnim):
     # Create Target Collection
     fountainEmitterCollection = createCollection("FountainEmitters", fountainCollection)
 
-    # Create circle curve for trajectory of emitters
-    radiusCurve = 20
-    fountainEmitterTrajectory = createBlenderObject(
-        BlenderObjectType.BEZIER_CIRCLE,
-        collection=fountainEmitterCollection,
-        name="fountainEmitterTrajectory",
-        location=(0, 0, 3),
-        radius=radiusCurve
-    )
-
-    # Animate circle curve with rotation
-    rotationSpeed = 0.05  # Rotations per second
-    startFrame = 1
-    endFrame = int(lastNoteTimeOff * fps)  # Use global lastNoteTimeOff
-    totalRotations = rotationSpeed * lastNoteTimeOff
-
-    # Set keyframes for Z rotation
-    fountainEmitterTrajectory.rotation_euler.z = 0
-    fountainEmitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=startFrame)
-
-    fountainEmitterTrajectory.rotation_euler.z = totalRotations * 2 * math.pi  # Convert to radians
-    fountainEmitterTrajectory.keyframe_insert(data_path="rotation_euler", index=2, frame=endFrame)
-
-    # Make animation linear
-    for fcurve in fountainEmitterTrajectory.animation_data.action.fcurves:
-        for keyframe in fcurve.keyframe_points:
-            keyframe.interpolation = 'LINEAR'
-
     g = -bScn.gravity[2]  # z gravity from blender (m/s^2)
 
     delayImpact = 3.0  # Time in second from emitter to target
@@ -2422,56 +2742,46 @@ def createFountain(masterCollection, trackMask, typeAnim):
     hiddenCollection.objects.link(fountainConstantsObj)
     fountainConstantsObj["delay"] = delayImpact
 
+    emittersList = []
     trackCount = 0
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        colorTrack = colorFromIndex(trackIndex, len(tracks))
+        # colorTrack = colorFromIndex(trackIndex, len(tracks))
         trackCount += 1
 
         # Particle
         particleName = f"Particle-{trackIndex}-{track.name}"
-        particleObj = createDuplicateLinkedObject(hiddenCollection, fountainModelParticle, particleName)
+        particleObj = createDuplicateLinkedObject(hiddenCollection, fountainModelParticle, particleName,independant=False)
         particleObj.name = particleName
         particleObj.location = (trackIndex * 2, 0, -12)
         particleObj.scale = (0.3,0.3,0.3)
-        particleObj["baseColor"] = colorTrack
-        particleObj["emissionColor"] = colorTrack
+        particleObj["baseColor"] = tracksColor[trackCount - 1]
+        particleObj["emissionColor"] = tracksColor[trackCount - 1]
         particleObj["emissionStrength"] = 8.0
 
         # Emitter around the targets
         emitterName = f"Emitter-{trackIndex}-{track.name}"
-        emitterObj = createDuplicateLinkedObject(fountainEmitterCollection, fountainModelEmitter, emitterName)
+        emitterObj = createDuplicateLinkedObject(fountainEmitterCollection, fountainModelEmitter, emitterName,independant=False)
+        emittersList.append(emitterObj)
 
-        # Add Clamp To constraint
-        clampConstraint = emitterObj.constraints.new(type='CLAMP_TO')
-        clampConstraint.target = fountainEmitterTrajectory
-        clampConstraint.use_cyclic = True  # Enable cyclic for closed curve
-
-        # Calculate position on curve (0 to 1)
-        curvePosition = trackCount / tacksProcessed
-        clampConstraint.target_space = 'LOCAL'
-
-        emitterObj.location = (radiusCurve * 2 * curvePosition, 0, 0)
+        emitterObj.location = (0, 0, 0)
         emitterObj.scale = (1, 1, 0.2)
-        emitterObj["baseColor"] = colorTrack
-        emitterObj["emissionColor"] = colorTrack
-
-        # Set initial position on curve
-        clampConstraint.main_axis = 'CLAMPTO_X'  # Use X axis for clamping
+        emitterObj["baseColor"] = tracksColor[trackCount - 1]
+        emitterObj["emissionColor"] = tracksColor[trackCount - 1]
 
         # One particle per note
-        for currentIndex, note in enumerate(track.notes):
+        for noteIndex, note in enumerate(track.notes):
 
             frameTimeOn = int(note.timeOn * fps)
             frameTimeOff = int(note.timeOff * fps)
             octave, numNote = extractOctaveAndNote(note.noteNumber)
 
             # Add a particle system to the object
-            pSystemName = f"ParticleSystem-{octave}-{currentIndex}"
+            pSystemName = f"ParticleSystem-{octave}-{noteIndex}"
             particleSystem = emitterObj.modifiers.new(name=pSystemName, type='PARTICLE_SYSTEM')
-            pSettingName = f"ParticleSettings-{octave}-{currentIndex}"
+            pSettingName = f"ParticleSettings-{octave}-{noteIndex}"
             particleSettings = bDat.particles.new(name=pSettingName)
             particleSystem.particle_system.settings = particleSettings
 
@@ -2537,56 +2847,248 @@ def createFountain(masterCollection, trackMask, typeAnim):
             # Configure particle system settings - Fields Weights
             particleSettings.effector_weights.gravity = 1
 
-        wLog(f"Fountain - create {currentIndex} particles for track {trackIndex}")
+        wLog(f"Fountain - create {noteIndex} particles for track {trackIndex}")
 
-        for currentIndex, note in enumerate(track.notes):
+        # Animate target
+        for noteIndex, note in enumerate(track.notes):
+            octave, numNote = extractOctaveAndNote(note.noteNumber)
+            targetName = f"Target-{numNote}-{octave}"
+            noteObj = bDat.objects[targetName]
+            noteAnimate(noteObj, "MultiLight", track, noteIndex, tracksColor[trackCount - 1])
+
+        wLog(f"Fountain - animate targets with {noteIndex} notes")
+
+
+    # Create circle curve for trajectory of emitters
+    radiusCurve = 20
+    fountainEmitterTrajectory = createBlenderObject(
+        BlenderObjectType.BEZIER_CIRCLE,
+        collection=fountainEmitterCollection,
+        name="fountainEmitterTrajectory",
+        location=(0, 0, 3),
+        radius=radiusCurve
+    )
+
+    # emitters along the curve
+    distributeObjectsWithClampTo(emittersList, fountainEmitterTrajectory)
+    animCircleCurve(fountainEmitterTrajectory, 0.05)
+
+    return
+
+def createlightShow(masterCollection, trackMask, typeAnim):
+
+    wLog(f"Create a Light Show Notes Animation type = {typeAnim}")
+    
+    listOfSelectedTrack, noteMin, noteMax, octaveCount, tracksProcessed, tracksColor = parseRangeFromTracks(trackMask)
+    
+    # Create master LightShow collection
+    lightShowCollection = createCollection("LightShow", masterCollection)
+    
+    ringCount = 64  # Number of rings to create
+    # Create model objects
+    lightShowModelUVSphere = createBlenderObject(
+        BlenderObjectType.UVSPHERE,
+        collection=hiddenCollection,
+        name="lightShowModelUVSphere",
+        location=(0, 0, -5),
+        radius=1,
+        segments=48,
+        rings=ringCount
+    )
+
+    # Create the two materials
+    mat_opaque = bpy.data.materials.new(name="mat_opaque")
+    mat_opaque.use_nodes = True
+    mat_opaque.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 1.0
+    
+    mat_trans = bpy.data.materials.new(name="mat_trans")
+    mat_trans.use_nodes = True
+    mat_trans.node_tree.nodes["Principled BSDF"].inputs["Alpha"].default_value = 0.0
+    
+    # Assign both materials to sphere
+    lightShowModelUVSphere.data.materials.append(mat_opaque)  # Material index 0
+    lightShowModelUVSphere.data.materials.append(mat_trans)   # Material index 1
+
+    vertices_per_ring = 48  # Double the previous value
+    vertices_per_octave = vertices_per_ring * 3  # 2 rings used + 1 ring skipped
+
+    mesh = lightShowModelUVSphere.data
+
+    # Create dictionary to store face indices per note
+    note_faces = {}
+    
+    offset = 10  # Offset to center the rings
+    # Create vertex groups and store face indices
+    for octave in range(11):
+        for note in range(12):
+            vg = lightShowModelUVSphere.vertex_groups.new(name=f"note_{octave}-{note}")
+            
+            # Calculate base index and vertices
+            baseIndex = 1 + ((octave+offset) * vertices_per_octave)
+            v1 = baseIndex + (note * 4)
+            v2 = v1 + 1
+            v3 = v1 + vertices_per_ring
+            v4 = v2 + vertices_per_ring
+            
+            # Store vertices in vertex group
+            if all(v < len(mesh.vertices) for v in [v1, v2, v3, v4]):
+                vg.add([v1, v2, v3, v4], 1.0, 'ADD')
+                
+                # Find and store face index
+                for face in mesh.polygons:
+                    if all(v in face.vertices for v in [v1, v2, v3, v4]):
+                        note_faces[f"note_{octave}-{note}"] = face.index
+                        break
+                                                
+    # # Verify assignments
+    # for group in lightShowModelUVSphere.vertex_groups:
+    #     vertices_in_group = []
+    #     for v in mesh.vertices:
+    #         try:
+    #             group.weight(v.index)
+    #             vertices_in_group.append(v.index)
+    #         except RuntimeError:
+    #             continue
+    #     wLog(f"Group {group.name} has {len(vertices_in_group)} vertices: {vertices_in_group}")
+
+    sphereLights = []
+    trackCount = 0
+    # Create on sphere per track
+    for trackIndex, track in enumerate(tracks):
+        if trackIndex not in listOfSelectedTrack:
+            continue
+
+        trackCount += 1
+        # colorTrack = colorFromIndex(trackIndex, len(tracks))
+
+        # Create collection for track
+        trackName = f"Track-{trackIndex}-{track.name}"
+        trackCollection = createCollection(trackName, lightShowCollection)
+
+        # Create sphere object
+        sphereName = f"Sphere-{trackIndex}-{track.name}"
+        sphere = createDuplicateLinkedObject(trackCollection, lightShowModelUVSphere, sphereName, independant=True)
+        sphere.location = (0, 0, 0)
+        sphereLights.append(sphere)
+
+        if typeAnim == "Cycle":
+            # Create Light Point into sphere
+            lightPoint = createBlenderObject(
+                BlenderObjectType.LIGHTSHOW,
+                collection=trackCollection,
+                name=f"Light-{trackIndex}-{track.name}",
+                location=sphere.location,
+                typeLight='POINT',
+                radius=0.2
+            )
+            lightPoint["emissionColor"] = tracksColor[trackCount -1]
+            lightPoint["emissionStrength"] = 20000
+        else:
+            # Create Light Point into sphere
+            lightPoint = createBlenderObject(
+                BlenderObjectType.POINT,
+                collection=trackCollection,
+                name=f"Light-{trackIndex}-{track.name}",
+                location=sphere.location,
+                typeLight='POINT',
+                radius=0.8
+            )
+            lightPoint.data.color = trackColors[trackIndex]
+            lightPoint.data.energy = 2000000
+
+        # parent light to sphere
+        lightPoint.parent = sphere
+
+        # Initialize all faces to opaque at frame 0
+        mesh = sphere.data
+        for face in mesh.polygons:
+            face.material_index = 0
+            face.keyframe_insert('material_index', frame=0)
+    
+        # Animate the sphere
+        for noteIndex, note in enumerate(track.notes):
             # Find the previous note with the same note number
             previousNote = None
-            for prevIndex in range(currentIndex - 1, -1, -1):
+            for prevIndex in range(noteIndex - 1, -1, -1):
                 if track.notes[prevIndex].noteNumber == note.noteNumber:
                     previousNote = track.notes[prevIndex]
                     break
 
             # Find the next note with the same note number
             nextNote = None
-            for nextIndex in range(currentIndex + 1, len(track.notes)):
+            for nextIndex in range(noteIndex + 1, len(track.notes)):
                 if track.notes[nextIndex].noteNumber == note.noteNumber:
                     nextNote = track.notes[nextIndex]
                     break
 
-            # animate target
-            octave, numNote = extractOctaveAndNote(note.noteNumber)
-            targetName = f"Target-{numNote}-{octave}"
-            noteObj = bDat.objects[targetName]
-            noteAnimate(noteObj, "MultiLight", note, previousNote, nextNote, colorTrack)
+            octave, noteNumber = extractOctaveAndNote(note.noteNumber)
+            noteName = f"note_{octave}-{noteNumber}"
+            noteFrameOn = int(note.timeOn * fps)
+            noteFrameOff = int(note.timeOff * fps)
+            
+            # Get face directly from stored index
+            if noteName in note_faces:
+                face = mesh.polygons[note_faces[noteName]]
+                face.material_index = 0
+                face.keyframe_insert('material_index', frame=noteFrameOn - 1)
+                face.material_index = 1
+                face.keyframe_insert('material_index', frame=noteFrameOn)
+                face.material_index = 1
+                face.keyframe_insert('material_index', frame=noteFrameOff - 1)
+                face.material_index = 0
+                face.keyframe_insert('material_index', frame=noteFrameOff)
 
-        wLog(f"Fountain - animate targets with {currentIndex} notes")
+        wLog(f"Light Show - Animate track {trackIndex} with {noteIndex} notes")
 
-    return
+    # Create circle curve for trajectory of spheres
+    radiusCurve = 10
+    lightShowTrajectory = createBlenderObject(
+        BlenderObjectType.BEZIER_CIRCLE,
+        collection=lightShowCollection,
+        name="lightShowTrajectory",
+        location=(0, 0, 3),
+        radius=radiusCurve
+    )
 
+    # spheres along the curve
+    distributeObjectsWithClampTo(sphereLights, lightShowTrajectory)
+    animCircleCurve(lightShowTrajectory, 0.03)
+
+###############################################################################
+#                                    MAIN                                     #
+###############################################################################
 """
-Main
-"""
+Primary execution point for MIDI to Blender animation generation.
 
+Configuration:
+    path: Base path for MIDI/audio files
+    filename: Name of MIDI file to process
+    typeAnim: Animation style to generate
+
+Output:
+    - 3D visualization in Blender
+    - Log file with execution details
+    - Optional audio synchronization
+
+Usage:
+    Set desired animation type by uncommenting appropriate createX() call
+"""
 timeStart = time.time()
 
-# path and name of midi file and so on - temporary => replaced when this become an Blender Extension
-path = "W:\\MIDI\\Samples"
-# filename = "MIDI Sample"
-# filename = "MIDI Sample C3toC4"
-# filename = "pianoTest"
-# filename = "sampleFountain"
-# filename = "T1_CDL" # midifile 1
+# path and name of midi file => replaced when this become an Blender Extension one day maybe
+path = "W:\\MIDI\\FreeMIDI"
+
+# filename = "Air-from Suite No-3 in D"
 # filename = "Albinoni"
-filename = "robert_miles-children"
-# filename = "RushE"
-# filename = "MIDI-Testing"
-# filename = "49f692270904997536e8f5c1070ac880" # Midifile 1 - Multi tracks classical
-# filename = "PianoClassique3Tracks978Mesures"
-# filename = "ManyTracks" # Midifile 1 - 28 tracks
-# filename = "067dffc37b3770b4f1c246cc7023b64d" # One channel Biggest 35188 notes
-# filename = "a4727cd831e7aff3df843a3da83e8968" # Midifile 0 -  1 track with several channels
-# filename = "4cd07d39c89de0f2a3c7b2920a0e0010" # Midifile 0 - 1 track with several channels
+filename = "Beethoven-Symphony-5-1"
+# filename = "Chopin_Nocturne_op9_n2"
+# filename = "Clair de lune"
+# filename = "eine-kleine-nachtmusik-mvt1"
+# filename = "Fur Elise"
+# filename = "Greensleeves"
+# filename = "Moonlight-Sonata"
+# filename = "There's Music in the Air"
+# filename = "Test"
 
 pathMidiFile = path + "\\" + filename + ".mid"
 pathAudioFile = path + "\\" + filename + ".mp3"
@@ -2669,23 +3171,29 @@ hiddenCollection.hide_viewport = True
 
 matGlobalCustom = CreateMatGlobalCustom()
 
+# Animation choosen => replaced when this become an Blender Extension one day maybe
+
 # createBlenderBGAnimation(masterCollection, "8-15", typeAnim="ZScale")
 # createBlenderBGAnimation(masterCollection, "0-7", typeAnim="Light")
-createBlenderBGAnimation(masterCollection, "3-4,7-12,14-20", typeAnim="ZScale,Light")
+# createBlenderBGAnimation(masterCollection, "3-4,7-12,14-20", typeAnim="ZScale,Light")
+createBlenderBGAnimation(masterCollection, "0-20", typeAnim="ZScale,Light")
+# createBlenderBGAnimation(masterCollection, "0", typeAnim="ZScale,Light")
 # createStripNotes(masterCollection, "3,9,11", typeAnim="ZScale")
 # createStripNotes(masterCollection, "0-15", typeAnim="Light")
 # createStripNotes(masterCollection, "0-15", typeAnim="ZScale,Light")
 # createWaterFall(masterCollection, "0-15", typeAnim="ZScale")
 # createWaterFall(masterCollection, "0-30", typeAnim="Light")
 # createWaterFall(masterCollection, "0-15", typeAnim="ZScale,Light")
-# createFireworksV1(masterCollection, "6-8", typeAnim="Spread")
+# createFireworksV1(masterCollection, "0-8", typeAnim="Spread")
 # createFireworksV1(masterCollection, "0-15", typeAnim="Spread,Light")
-# createFireworksV2(masterCollection, "6-8", typeAnim="Spread")
+# createFireworksV2(masterCollection, "0-8", typeAnim="Spread")
 # createFireworksV2(masterCollection, "0-15", typeAnim="Spread,Light")
-createFountain(masterCollection, "0,2,5,6,13", typeAnim="fountain")
-    
-bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
+# createFountain(masterCollection, "0,2,5,6,13", typeAnim="fountain")
+# createFountain(masterCollection, "0-15", typeAnim="fountain")
+# createlightShow(masterCollection, "0-15", typeAnim="Cycle")
+# createlightShow(masterCollection, "0-15", typeAnim="EEVEE")
 
+bScn.frame_end = math.ceil(lastNoteTimeOff + 5)*fps
 createCompositorNodes()
 
 # viewportShadingRendered()

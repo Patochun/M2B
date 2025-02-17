@@ -1,6 +1,35 @@
 
 Release notes :
 
+MTB V9
+
+- New visualisation = LightShow
+    - Works with Cycle or EEVEE animType
+    - One sphere by track
+    - 1 Octave per ring x 10 with interleaves on 1 ring on bottom hemisphere only
+    - Same for 12 notes per ring used with interleaves
+- Visualisation StripNotes
+    - Background design with black & white note and octave
+- TODO
+    - LightShow
+        - rewrite animating face part => Use noteAnimate too
+        - Have same hole size for each note, no matter ring (resize scale of face)
+        - Study light improvment
+    - StripNotes
+        - Display octaves on backplane => Shader ?
+    - New visualisation Grid
+        - Like BarGraph but in a grid
+            - How use track info
+- FIX
+    - Use of Clamp_TO instead of Follow_To to be able to work with drivers
+        - Fix dispatch object on curve via Clamp_To
+        - Maybe, still to be improve
+    - Add tracks Selected to Track filter used for infos
+- Rewriting
+    - noteAnimate take care of previous and next note instead of passing by arguments
+    - Reset pool of midifiles to have only royalty-free MIDI files
+
+
 MTB V8
 
 - All objects created are parented to empty in specific collection named "MasterLocation"
