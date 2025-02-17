@@ -2121,17 +2121,18 @@ def createBlenderBGAnimation(masterCollection, trackMask, typeAnim):
             obj["baseColor"] = 1.0 # Cyan
 
     # Animate cubes accordingly to notes event
+    trackCount = 0
     for trackIndex, track in enumerate(tracks):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        colorTrack = colorFromIndex(trackIndex, numberOfRenderedTracks)
+        trackCount += 1
 
         for noteIndex, note in enumerate(track.notes):
             # Construct the cube name and animate
             cubeName = f"Cube-{trackIndex}-{note.noteNumber}"
             noteObj = bDat.objects[cubeName]
-            noteAnimate(noteObj, typeAnim, track, noteIndex, colorTrack)
+            noteAnimate(noteObj, typeAnim, track, noteIndex, tracksColor[trackCount-1])
 
         wLog(f"BarGraph - Animate cubes for track {trackIndex} (notesCount) ({noteIndex})")
         
@@ -2748,7 +2749,6 @@ def createFountain(masterCollection, trackMask, typeAnim):
         if trackIndex not in listOfSelectedTrack:
             continue
 
-        # colorTrack = colorFromIndex(trackIndex, len(tracks))
         trackCount += 1
 
         # Particle
@@ -2959,7 +2959,6 @@ def createlightShow(masterCollection, trackMask, typeAnim):
             continue
 
         trackCount += 1
-        # colorTrack = colorFromIndex(trackIndex, len(tracks))
 
         # Create collection for track
         trackName = f"Track-{trackIndex}-{track.name}"
