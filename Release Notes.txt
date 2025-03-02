@@ -1,7 +1,59 @@
 
 Release notes :
 
-MTB V9
+
+M2B V10
+
+Restructuring from monobloc to modules
+
+M2B/
+├── __init__.py              
+├── M2B.py                  # Main script
+├── config/
+│   ├── __init__.py         
+│   ├── config.py           # Configuration settings
+│   └── globals.py          # Global state management
+├── utils/
+│   ├── __init__.py
+│   ├── collection.py       # Collection utilities
+│   ├── object.py           # Object creation/manipulation
+│   ├── animation.py        # Animation functions
+│   ├── midi.py             # MIDI file handling
+│   └── stuff.py            # General utilities
+└── animations/
+    ├── __init__.py
+    ├── bargraph.py
+    ├── stripnotes.py
+    ├── waterfall.py
+    ├── fireworks.py
+    ├── fountain.py
+    └── lightshow.py
+
+- improvment
+    - Adding noteStatus custom value to all object figuring note
+    - Adding "*" wildcard to function parseRangeFromTracks, mean all tracks with no selection
+- FIX
+    - baseSaturation is used in ShaderNodeMixRGB with MIX mode and not color
+- Rewriting
+    - Anim light become B2R-Light
+    - trackCount & trackIndex in loop of selectedTracks
+- TODO
+    - noteAnimate set custom value (with keyframes) on each object
+        - note State = 0 or 1 (off and on)
+        - note velocity
+    - Visualisation using B2R-Light
+        - Scan to know the medium velocity and make color accordingly ? To avoid big red note allways
+    - LightShow
+        - rewrite animating face part => Use noteAnimate too
+        - Have same hole size for each note, no matter ring (resize scale of face or use icosphere)
+        - Study light improvment
+    - Fountain
+        - Use size of particle to figure velocity or length of note
+    - New visualisation Grid
+        - Like BarGraph but in a grid
+            - How use track info
+
+M2B V9
 
 - New visualisation = LightShow
     - Works with Cycle or EEVEE animType
@@ -10,16 +62,6 @@ MTB V9
     - Same for 12 notes per ring used with interleaves
 - Visualisation StripNotes
     - Background design with black & white note and octave
-- TODO
-    - LightShow
-        - rewrite animating face part => Use noteAnimate too
-        - Have same hole size for each note, no matter ring (resize scale of face)
-        - Study light improvment
-    - StripNotes
-        - Display octaves on backplane => Shader ?
-    - New visualisation Grid
-        - Like BarGraph but in a grid
-            - How use track info
 - FIX
     - Use of Clamp_TO instead of Follow_To to be able to work with drivers
         - Fix dispatch object on curve via Clamp_To
@@ -30,7 +72,7 @@ MTB V9
     - Reset pool of midifiles to have only royalty-free MIDI files
 
 
-MTB V8
+M2B V8
 
 - All objects created are parented to empty in specific collection named "MasterLocation"
     - One empty plain axe by collection
@@ -68,7 +110,7 @@ MTB V8
     - parseRangeFromTracks return selectd Tracks of course but now, also noteMin, noteMax, OctaveCount
 
 
-MTB V7
+M2B V7
 
 - Review for camelCase usage
 - BarGraph view
@@ -87,7 +129,7 @@ MTB V7
     BLOOM => MEDIUM quality, threshold = 5, size = 4
 - New visualisation fireworks V1 using geometry nodes
 
-MTB V6
+M2B V6
 
 - Remove channels objects and work only with track
     - Channel is a data used by device MIDI. Not very usefull in visualisation context
@@ -123,7 +165,7 @@ MTB V6
     - Node glare with blooming
 - Cleaning import    
 
-MTB V5
+M2B V5
 
 - Add MIDITrackUsed data into MIDIChannel structure
     - TODO => is it usefull ? else cleanup !
@@ -142,7 +184,7 @@ MTB V5
     - Create sub collection by track
     - Include track info in note object
 
-MTB V4
+M2B V4
 
 - Purging orphaned data to clean up Blender
 - Test note length minimum (not under (10 % of FPS) * 2) => Clamp
@@ -157,7 +199,7 @@ MTB V4
         - Versus Filter same note played at the same time in MIDI data on same channel from multiple track
 - Notes Strip => possibility to precise witch channel we choose with a channel mask
 
-MTB V3
+M2B V3
 
 - Simplify midiparser to focus only on note events
     - Check all events to have allways the good deltatime from any events
@@ -173,15 +215,15 @@ MTB V3
 - Create Hidden collection to store model object into
 - Réorganize collection
 
-MTB V2
+M2B V2
 
 - Add midi channel concept
     - In any track there is one or multiple midi channel associated with notes
     - Mean any note are played into a specific midi channel
 - Testing for midi format 0, 1 et 2
-    - Secure ASCII decoding for values above 128 (use latin-1 instead)MTB V1
+    - Secure ASCII decoding for values above 128 (use latin-1 instead)M2B V1
 
-MTB V1
+M2B V1
 
 - Inform if fps is good or not (>=50 is good)
 - Reuse of MIDI parser
