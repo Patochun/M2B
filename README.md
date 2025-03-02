@@ -70,4 +70,4 @@ Patrick M (Patochun)
 
 ## Version
 
-Current version: 8.0 (2024)
+Current version: 10.0 (2025)
