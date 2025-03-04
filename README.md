@@ -18,8 +18,8 @@ M2B converts MIDI music data into various 3D animated visualizations in Blender.
   
 - Supports multiple MIDI file formats:
   - Format 0 (single track)
-  - Format 1 (multiple tracks) 
-  - Format 2
+  - Format 1 (multiple tracks)
+  - Format 2 (multiple tracks)
 
 - Real-time animation synchronized with:
   - Note on/off events

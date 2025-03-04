@@ -72,7 +72,7 @@ def noteAnimate(obj, typeAnim, track, noteIndex, colorTrack):
         return
     
     # Transform linear velocity (0-1) into sinusoidal brightness curve
-    brightness = 5 + (sin(note.velocity * pi/2) * 10)
+    brightness = 5 + (sin(note.velocity * pi/2) * 2)
 
     # List of keyframes to animate
     keyframes = []
@@ -81,7 +81,7 @@ def noteAnimate(obj, typeAnim, track, noteIndex, colorTrack):
     for animation_type in typeAnim.split(','):
         match animation_type.strip():
             case "ZScale":
-                velocity = 8 * note.velocity
+                velocity = 3 * note.velocity
                 keyframes.extend([
                     (frameT1, "scale", (None, None, 1)),
                     (frameT1, "location", (None, None, 0)),

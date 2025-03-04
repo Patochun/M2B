@@ -4,7 +4,6 @@
 """
 MIDI module imported from https://github.com/JacquesLucke/animation_nodes
 I was the initiator and participated in the implementation of the MIDI module in Animation Nodes
-I wrote original code before the final code was written by OMAR Emara and slightly modified here according to my needs
 Additions:
     added noteMin & noteMax in track object 
     added notesUsed in track object

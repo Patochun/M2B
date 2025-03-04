@@ -223,7 +223,8 @@ def createFountain(trackMask, typeAnim):
             # Configure particle system settings - Render
             particleSettings.render_type = 'OBJECT'
             particleSettings.instance_object = particleObj
-            particleSettings.particle_size = 0.7  # Base size of the particle
+            # particleSettings.particle_size = 0.7  # Base size of the particle
+            particleSettings.particle_size = note.velocity * 1.4  # Base size of the particle
 
             # Configure particle system settings - Fields Weights
             particleSettings.effector_weights.gravity = 1

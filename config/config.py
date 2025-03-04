@@ -42,53 +42,10 @@ MIDI_CONFIG = {
         "Greensleeves",
         "Moonlight-Sonata",
     ],
-    "current": "Greensleeves"
+    "current": "Clair de lune"
 }
 
-from utils.stuff import CreateMatGlobalCustom
 from sys import platform
-
-"""
-Purge all orphaned (unused) data in the current Blender file.
-This includes unused objects, materials, textures, collections, particles, etc.
-"""
-def purgeUnusedDatas():
-    purgedItems = 0
-    dataCategories = [
-        bDat.objects, bDat.curves, bDat.meshes, bDat.materials,
-        bDat.textures, bDat.images, bDat.particles, bDat.node_groups,
-        bDat.actions, bDat.collections, bDat.sounds
-    ]
-    
-    for dataBlock in dataCategories:
-        for item in list(dataBlock):  # Use list() to avoid modifying during iteration
-            if not item.users:
-                dataBlock.remove(item)
-                purgedItems += 1
-    
-    # wLog(f"Purging complete. {purgedItems} orphaned data cleaned up.")
-
-def initGlobals():
-    """Initialize global variables that require Blender context"""
-    
-    # Create main collections
-    glb.masterCollection = bpy.data.collections.new("M2B")
-    bScn.collection.children.link(glb.masterCollection)
-
-    purgeUnusedDatas()
-    
-    glb.masterLocCollection = bpy.data.collections.new("MasterLocation") 
-    glb.masterCollection.children.link(glb.masterLocCollection)
-    
-    glb.hiddenCollection = bpy.data.collections.new("Hidden")
-    glb.masterCollection.children.link(glb.hiddenCollection)
-    glb.hiddenCollection.hide_viewport = True
-    
-    # Create global material
-    glb.matGlobalCustom = CreateMatGlobalCustom()
-
-    # get blender fps
-    glb.fps = bScn.render.fps
     
 def getFilesPaths():
     # Get all relevant file paths for current MIDI file
@@ -100,4 +57,3 @@ def getFilesPaths():
         "audio": f"{base_path}\\{filename}.mp3",
         "log": f"{base_path}\\{filename}.log"
     }
- 

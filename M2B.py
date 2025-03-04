@@ -27,10 +27,11 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config.globals import *
-from config.config import initGlobals, getFilesPaths, bCon, bOps, bScn
-from utils.stuff import initLog, wLog, endLog, createCompositorNodes, determineGlobalRanges
+from config.config import getFilesPaths, bScn
+from utils.stuff import initLog, wLog, endLog, createCompositorNodes, determineGlobalRanges, loadaudio
 from utils.midi import readMIDIFile
-from utils.collection import toggleCollectionCollapse
+from utils.collection import initCollections, toggleCollectionCollapse
+from utils.object import initMaterials
 from math import ceil
 
 ###############################################################################
@@ -54,13 +55,14 @@ Usage:
 """
 timeStart = time.time()
 
-initGlobals()
+# initGlobals()
 paths = getFilesPaths()
-
-# wLog(f"Python version = {platform}")
-# wLog(f"Blender version = {bpy.app.version_string}")
-
 initLog(paths["log"])
+initCollections()
+initMaterials()
+
+# get blender fps
+glb.fps = bScn.render.fps
 
 # Import midi Datas
 midiFile, TempoMap, glb.tracks = readMIDIFile(paths["midi"])
@@ -70,28 +72,9 @@ wLog(f"Midi type = {midiFile.midiFormat}")
 wLog(f"PPQN = {midiFile.ppqn}")
 wLog(f"Number of tracks = {len(glb.tracks)}")
 
-# load audio file mp3 with the same name of midi file if exist
-# into sequencer
-if os.path.exists(paths["audio"]):
-    if not bScn.sequence_editor:
-        bScn.sequence_editor_create()
-
-    # Clear the VSE, then add an audio file
-    bScn.sequence_editor_clear()
-    my_contextmem = bCon.area.type
-    my_context = 'SEQUENCE_EDITOR'
-    bCon.area.type = my_context
-    my_context = bCon.area.type
-    bOps.sequencer.sound_strip_add(filepath=paths["audio"], relative_path=True, frame_start=1, channel=1)
-    bCon.area.type = my_contextmem
-    my_context = bCon.area.type
-    wLog("Audio file mp3 is loaded into VSE")
-else:
-    wLog("Audio file mp3 not exist")
+loadaudio(paths["audio"])
 
 noteMinAllTracks, noteMaxAllTracks, firstNoteTimeOn, glb.lastNoteTimeOff, noteMidRangeAllTracks = determineGlobalRanges()
-
-# setBlenderUnits()
 
 from animations.barGraph import createBlenderBGAnimation
 from animations.stripNotes import createStripNotes
@@ -111,11 +94,7 @@ createFountain(trackMask="0-15", typeAnim="fountain")
 # createLightShow(trackMask="0-15", typeAnim="EEVEE")
 
 bScn.frame_end = ceil(glb.lastNoteTimeOff + 5) * glb.fps
-createCompositorNodes()
-
-# viewportShadingRendered()
-# GUI_maximizeAeraView("VIEW_3D")
-# collapseAllCollectionInOutliner()
+createCompositorNodes() 
 toggleCollectionCollapse(2)
 
 # Close log file

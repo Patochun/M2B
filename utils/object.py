@@ -394,3 +394,135 @@ def createDuplicateLinkedObject(collection, originalObject, name, independant=Fa
         linkedObject.parent = parentEmpty
     return linkedObject
 
+"""
+Creates a global custom material with color ramps and emission control
+
+This function creates or updates a shared material used across multiple objects.
+It sets up a node network for dynamic color and emission control through object properties.
+
+Node Setup:
+    - Principled BSDF: Main shader
+    - Color Ramps (HSV mode):
+      - Base color: Black -> White -> Blue -> Red -> Yellow -> Green -> Cyan
+      - Emission: Same color progression
+    - Attribute nodes for:
+      - baseColor: Controls base color selection (0.0-1.0)
+      - emissionColor: Controls emission color selection (0.0-1.0)
+      - emissionStrength: Controls emission intensity
+      - alpha: Controls transparency
+
+Custom Properties Used:
+    - baseColor: Object property for base color selection
+    - baseSaturation: Object property for color saturation
+    - emissionColor: Object property for emission color
+    - emissionStrength: Object property for emission intensity
+    - alpha: Object property for transparency
+
+Returns:
+    bpy.types.Material: The created or updated material
+
+Usage:
+    material = CreateMatGlobalCustom()
+    object.data.materials.append(material)
+"""
+def CreateMatGlobalCustom():
+    materialName = "GlobalCustomMaterial"
+    if materialName not in bDat.materials:
+        mat = bDat.materials.new(name=materialName)
+        mat.use_nodes = True
+    else:
+        mat = bDat.materials[materialName]
+
+    # Configure the material nodes
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    # Add necessary nodes
+    output = nodes.new(type="ShaderNodeOutputMaterial")
+    output.location = (600, 0)
+
+    principledBSDF = nodes.new(type="ShaderNodeBsdfPrincipled")
+    principledBSDF.location = (300, 0)
+
+    attributeBaseColor = nodes.new(type="ShaderNodeAttribute")
+    attributeBaseColor.location = (-400, 100)
+    attributeBaseColor.attribute_name = "baseColor"
+    attributeBaseColor.attribute_type = 'OBJECT'
+
+    attributeBaseSat = nodes.new(type="ShaderNodeAttribute")
+    attributeBaseSat.location = (-400, 300)
+    attributeBaseSat.attribute_name = "baseSaturation"
+    attributeBaseSat.attribute_type = 'OBJECT'
+
+    colorRampBase = nodes.new(type="ShaderNodeValToRGB")
+    colorRampBase.location = (-200, 100)
+    colorRampBase.color_ramp.color_mode = 'HSV'
+    colorRampBase.color_ramp.interpolation = 'CARDINAL'  # Ensure linear interpolation
+    colorRampBase.color_ramp.elements.new(0.01)  # Add a stop at 0.01
+    colorRampBase.color_ramp.elements.new(0.02)  # Add a stop at 0.02
+    colorRampBase.color_ramp.elements.new(0.40)  # Add a stop at 0.40
+    colorRampBase.color_ramp.elements.new(0.60)  # Add a stop at 0.60
+    colorRampBase.color_ramp.elements.new(0.80)  # Add a stop at 0.80
+    colorRampBase.color_ramp.elements[0].color = (0, 0, 0, 1)  # Black 0.0
+    colorRampBase.color_ramp.elements[1].color = (1, 1, 1, 1)  # White 0.01
+    colorRampBase.color_ramp.elements[2].color = (0, 0, 1, 1)  # Blue 0.02
+    colorRampBase.color_ramp.elements[3].color = (1, 0, 0, 1)  # Red 0.4
+    colorRampBase.color_ramp.elements[4].color = (1, 1, 0, 1)  # Yellow 0.6
+    colorRampBase.color_ramp.elements[5].color = (0, 1, 0, 1)  # Green 0.8
+    colorRampBase.color_ramp.elements[6].color = (0, 1, 1, 1)  # Cyan 1.0
+
+    mixColorBase = nodes.new(type='ShaderNodeMixRGB')
+    mixColorBase.location = (100, 200)
+    mixColorBase.blend_type = 'MIX'
+    mixColorBase.inputs[2].default_value = (0.0, 0.0, 0.0, 1)
+
+    attributeEmissionStrength = nodes.new(type="ShaderNodeAttribute")
+    attributeEmissionStrength.location = (-400, -300)
+    attributeEmissionStrength.attribute_name = "emissionStrength"
+    attributeEmissionStrength.attribute_type = 'OBJECT'
+
+    attributeEmissionColor = nodes.new(type="ShaderNodeAttribute")
+    attributeEmissionColor.location = (-400, -100)
+    attributeEmissionColor.attribute_name = "emissionColor"
+    attributeEmissionColor.attribute_type = 'OBJECT'
+
+    colorRampEmission = nodes.new(type="ShaderNodeValToRGB")
+    colorRampEmission.location = (-200, -100)
+    colorRampEmission.color_ramp.color_mode = 'HSV'
+    colorRampEmission.color_ramp.interpolation = 'CARDINAL'  # Ensure linear interpolation
+    colorRampEmission.color_ramp.elements.new(0.01)  # Add a stop at 0.01
+    colorRampEmission.color_ramp.elements.new(0.02)  # Add a stop at 0.02
+    colorRampEmission.color_ramp.elements.new(0.40)  # Add a stop at 0.40
+    colorRampEmission.color_ramp.elements.new(0.60)  # Add a stop at 0.60
+    colorRampEmission.color_ramp.elements.new(0.80)  # Add a stop at 0.80
+    colorRampEmission.color_ramp.elements[0].color = (0, 0, 0, 1)  # Black 0.0
+    colorRampEmission.color_ramp.elements[1].color = (1, 1, 1, 1)  # White 0.01
+    colorRampEmission.color_ramp.elements[2].color = (0, 0, 1, 1)  # Blue 0.02
+    colorRampEmission.color_ramp.elements[3].color = (1, 0, 0, 1)  # Red 0.4
+    colorRampEmission.color_ramp.elements[4].color = (1, 1, 0, 1)  # Yellow 0.6
+    colorRampEmission.color_ramp.elements[5].color = (0, 1, 0, 1)  # Green 0.8
+    colorRampEmission.color_ramp.elements[6].color = (0, 1, 1, 1)  # Cyan 1.0
+
+    attributeAlpha = nodes.new(type="ShaderNodeAttribute")
+    attributeAlpha.location = (-400, -500)
+    attributeAlpha.attribute_name = "alpha"
+    attributeAlpha.attribute_type = 'OBJECT'
+
+    # Connect the nodes
+    links.new(attributeBaseColor.outputs["Fac"], colorRampBase.inputs["Fac"])  # Emission color
+    links.new(attributeEmissionStrength.outputs["Fac"], principledBSDF.inputs["Emission Strength"])  # Emission strength
+    links.new(attributeAlpha.outputs["Fac"], principledBSDF.inputs["Alpha"])  # Emission strength
+    links.new(attributeEmissionColor.outputs["Fac"], colorRampEmission.inputs["Fac"])  # Emission color
+    links.new(colorRampBase.outputs["Color"], mixColorBase.inputs[2])   # Original color
+    links.new(attributeBaseSat.outputs["Fac"], mixColorBase.inputs[0])  # Factor from baseSaturation
+    links.new(mixColorBase.outputs["Color"], principledBSDF.inputs["Base Color"])  # Output to shader
+    links.new(colorRampEmission.outputs["Color"], principledBSDF.inputs["Emission Color"])  # Emission color
+    links.new(principledBSDF.outputs["BSDF"], output.inputs["Surface"])  # Output surface
+
+    return mat
+
+def initMaterials():
+
+    # Create global material
+    glb.matGlobalCustom = CreateMatGlobalCustom()

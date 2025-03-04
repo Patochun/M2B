@@ -26,7 +26,6 @@ def createBlenderBGAnimation(trackMask, typeAnim):
     wLog(f"Create a BarGraph Animation type = {typeAnim}")
     
     listOfSelectedTrack, noteMin, noteMax, octaveCount, numberOfRenderedTracks, tracksColor = parseRangeFromTracks(trackMask)
-    tracks = glb.tracks
 
     # Create master BG collection
     BGCollect = createCollection("BarGraph", glb.masterCollection)
@@ -60,7 +59,7 @@ def createBlenderBGAnimation(trackMask, typeAnim):
 
     # Parse track to create BG
     for trackCount, trackIndex in enumerate(listOfSelectedTrack):
-        track = tracks[trackIndex]
+        track = glb.tracks[trackIndex]
 
         # create collection
         BGTrackName = f"BG-{trackIndex}-{track.name}"
@@ -103,7 +102,7 @@ def createBlenderBGAnimation(trackMask, typeAnim):
     # Animate cubes accordingly to notes event
     for trackCount, trackIndex in enumerate(listOfSelectedTrack):
         # wLog(f"trackCount={trackCount} & trackIndex={trackIndex}")
-        track = tracks[trackIndex]
+        track = glb.tracks[trackIndex]
         for noteIndex, note in enumerate(track.notes):
             # Construct the cube name and animate
             cubeName = f"Cube-{trackIndex}-{note.noteNumber}"
