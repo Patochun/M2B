@@ -42,7 +42,7 @@ MIDI_CONFIG = {
         "Greensleeves",
         "Moonlight-Sonata",
     ],
-    "current": "Clair de lune"
+    "current": "eine-kleine-nachtmusik-mvt1"
 }
 
 from sys import platform

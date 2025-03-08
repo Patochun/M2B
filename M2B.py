@@ -21,18 +21,25 @@ Usage : All parameters like midifile used and animation choices are hardcoded in
 """
 
 # Import necessary modules
+# modules standard
 import time  # Provides time-related functions
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from math import ceil
 
+# reload project modules
+# from utils.modules import reloadProjectModules  # Import the function (adjust path if needed)
+# reloadProjectModules()  # Reload all project modules automatically
+
+# modules M2B
 from config.globals import *
 from config.config import getFilesPaths, bScn
 from utils.stuff import initLog, wLog, endLog, createCompositorNodes, determineGlobalRanges, loadaudio
 from utils.midi import readMIDIFile
 from utils.collection import initCollections, toggleCollectionCollapse
 from utils.object import initMaterials
-from math import ceil
+from animations.animate import animate  
 
 ###############################################################################
 #                                    MAIN                                     #
@@ -76,22 +83,13 @@ loadaudio(paths["audio"])
 
 noteMinAllTracks, noteMaxAllTracks, firstNoteTimeOn, glb.lastNoteTimeOff, noteMidRangeAllTracks = determineGlobalRanges()
 
-from animations.barGraph import createBlenderBGAnimation
-from animations.stripNotes import createStripNotes
-from animations.waterFall import createWaterFall
-from animations.fireworksV1 import createFireworksV1
-from animations.fireworksV2 import createFireworksV2
-from animations.fountain import createFountain
-from animations.lightShow import createLightShow
-
-# createBlenderBGAnimation(trackMask="*", typeAnim="ZScale,B2R-Light")
-# createStripNotes(trackMask="0-15", typeAnim="B2R-Light")
-# createWaterFall(trackMask="0-30", typeAnim="B2R-Light")
-# createFireworksV1(trackMask="0-8", typeAnim="Spread")
-# createFireworksV2(trackMask="0-8", typeAnim="Spread")
-createFountain(trackMask="0-15", typeAnim="fountain")
-# createLightShow(trackMask="0-15", typeAnim="Cycle")
-# createLightShow(trackMask="0-15", typeAnim="EEVEE")
+# animate("barGraph", "0-15", "ZScale,B2R-Light")
+# animate("stripNotes", "0-15", "B2R-Light")
+# animate("waterFall", "0-30", "B2R-Light")
+# animate("fireworksV1", "0-15", "Spread")
+# animate("fireworksV2", "0-15", "Spread")
+# animate("fountain", "0-15", "fountain")
+animate("lightShow", "0-15", "Cycle")
 
 bScn.frame_end = ceil(glb.lastNoteTimeOff + 5) * glb.fps
 createCompositorNodes() 
