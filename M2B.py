@@ -29,8 +29,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from math import ceil
 
 # reload project modules
-# from utils.modules import reloadProjectModules  # Import the function (adjust path if needed)
-# reloadProjectModules()  # Reload all project modules automatically
+from utils.modules import reloadProjectModules  # Import the function (adjust path if needed)
+reloadProjectModules()  # Reload all project modules automatically
 
 # modules M2B
 from config.globals import *
@@ -38,6 +38,7 @@ from config.config import getFilesPaths, bScn
 from utils.stuff import initLog, wLog, endLog, createCompositorNodes, determineGlobalRanges, loadaudio
 from utils.midi import readMIDIFile
 from utils.collection import initCollections, toggleCollectionCollapse
+
 from utils.object import initMaterials
 from animations.animate import animate  
 
@@ -84,12 +85,12 @@ loadaudio(paths["audio"])
 noteMinAllTracks, noteMaxAllTracks, firstNoteTimeOn, glb.lastNoteTimeOff, noteMidRangeAllTracks = determineGlobalRanges()
 
 # animate("barGraph", "0-15", "ZScale,B2R-Light")
-# animate("stripNotes", "0-15", "B2R-Light")
+animate("stripNotes", "0-15", "B2R-Light")
 # animate("waterFall", "0-30", "B2R-Light")
 # animate("fireworksV1", "0-15", "Spread")
 # animate("fireworksV2", "0-15", "Spread")
 # animate("fountain", "0-15", "fountain")
-animate("lightShow", "0-15", "Cycle")
+# animate("lightShow", "0-15", "Cycle")
 
 bScn.frame_end = ceil(glb.lastNoteTimeOff + 5) * glb.fps
 createCompositorNodes() 

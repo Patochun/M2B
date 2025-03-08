@@ -6,6 +6,7 @@ It centralizes configuration to make it easier to modify project-wide settings.
 """
 
 import bpy
+
 from config.globals import *
 
 # Global blender objects
@@ -42,7 +43,7 @@ MIDI_CONFIG = {
         "Greensleeves",
         "Moonlight-Sonata",
     ],
-    "current": "eine-kleine-nachtmusik-mvt1"
+    "current": "Greensleeves"
 }
 
 from sys import platform
