@@ -28,7 +28,7 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from math import ceil
 
-# reload project modules
+# reload project modules - comment when release version
 from utils.modules import reloadProjectModules  # Import the function (adjust path if needed)
 reloadProjectModules()  # Reload all project modules automatically
 
